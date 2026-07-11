@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ちいさな島冒険譚 - Prototype v2</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: sans-serif; user-select: none; }
@@ -37,6 +38,8 @@
             box-sizing: border-box;
             pointer-events: none; /* ゲーム画面の邪魔をしない */
             z-index: 100;
+            background: rgba(0, 0, 0, 0.14);
+            backdrop-filter: blur(6px);
         }
 
         .pad-cluster {
@@ -55,7 +58,7 @@
         .pad-btn {
             width: 60px;
             height: 60px;
-            background: rgba(2ffff, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.2);
             border: 2px solid rgba(255, 255, 255, 0.4);
             border-radius: 50%;
             color: white;
