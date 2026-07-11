@@ -19,6 +19,89 @@
             width: 100%; height: 100%; background: #ff3333; transition: width 0.2s;
         }
         #controls { font-size: 11px; color: #aaa; margin-top: 15px; line-height: 1.4; border-top: 1px solid #444; padding-top: 10px; }
+
+        /* ダブルタップでのズームや画面のスクロールを禁止して操作性を上げる */
+        body, button {
+            touch-action: none;
+            user-select: none;
+        }
+
+        #virtual-pad {
+            position: fixed;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 30px;
+            box-sizing: border-box;
+            pointer-events: none; /* ゲーム画面の邪魔をしない */
+            z-index: 100;
+        }
+
+        .pad-cluster {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            pointer-events: auto; /* ボタン単体はタップ可能にする */
+        }
+
+        .horizontal-btns {
+            display: flex;
+            gap: 20px;
+        }
+
+        /* 十字キーの共通スタイル */
+        .pad-btn {
+            width: 60px;
+            height: 60px;
+            background: rgba(2ffff, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 4px 0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        /* 攻撃・ジャンプボタンのスタイル */
+        #action-cluster {
+            flex-direction: row;
+            gap: 15px;
+            align-self: flex-end;
+            margin-bottom: 20px;
+        }
+
+        .action-btn {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 100, 100, 0.3);
+            border: 2px solid rgba(255, 100, 100, 0.6);
+            border-radius: 50%;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        #btn-jump {
+            background: rgba(100, 200, 255, 0.3);
+            border-color: rgba(100, 200, 255, 0.6);
+        }
+
+        /* タップされた瞬間のエフェクト */
+        .pad-btn:active, .action-btn:active {
+            background: rgba(255, 255, 255, 0.6) !important;
+            color: black;
+        }
+
+        /* PCなどの広い画面ではバーチャルパッドを隠す（オプション） */
+        @media (min-width: 768px) {
+            #virtual-pad { display: none; }
+        }
     </style>
     <!-- Three.js を読み込み -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -38,6 +121,24 @@
             【ルール】黄色のゴールへ向かえ！<br>
             赤色の敵は一歩ごとに追ってくるぞ。<br>
             茶色のトゲを踏むとダメージ！
+        </div>
+    </div>
+    <!-- 画面上の操作パッドUI -->
+    <div id="virtual-pad">
+        <!-- 左側：移動十字キー -->
+        <div class="pad-cluster" id="move-cluster">
+            <button class="pad-btn" id="btn-up">▲</button>
+            <div class="horizontal-btns">
+                <button class="pad-btn" id="btn-left">◀</button>
+                <button class="pad-btn" id="btn-right">▶</button>
+            </div>
+            <button class="pad-btn" id="btn-down">▼</button>
+        </div>
+
+        <!-- 右側：アクションボタン -->
+        <div class="pad-cluster" id="action-cluster">
+            <button class="action-btn" id="btn-attack">攻撃</button>
+            <button class="action-btn" id="btn-jump">跳躍</button>
         </div>
     </div>
 

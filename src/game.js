@@ -415,8 +415,84 @@ function animate() {
     renderer.render(scene, camera);
 }
 
+// --- スマホ用タッチイベントの追加 ---
+function setupTouchControls() {
+    // ボタン要素の取得
+    const btnUp = document.getElementById('btn-up');
+    const btnDown = document.getElementById('btn-down');
+    const btnLeft = document.getElementById('btn-left');
+    const btnRight = document.getElementById('btn-right');
+    const btnAttack = document.getElementById('btn-attack');
+    const btnJump = document.getElementById('btn-jump');
+
+    if (!btnUp) return; // 要素がなければ何もしない
+
+    // 共通の入力制限チェック
+    const canInput = () => !player.isMoving && player.hp > 0;
+
+    // 前進
+    btnUp.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (!canInput()) return;
+        const nextX = player.x + player.dirX;
+        const nextZ = player.z + player.dirZ;
+        if (mapData[nextX] && mapData[nextX][nextZ] !== 1) {
+            player.targetX = nextX; player.targetZ = nextZ;
+            player.isMoving = true; moveEnemies();
+        }
+    });
+
+    // 後退
+    btnDown.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (!canInput()) return;
+        const nextX = player.x - player.dirX;
+        const nextZ = player.z - player.dirZ;
+        if (mapData[nextX] && mapData[nextX][nextZ] !== 1) {
+            player.targetX = nextX; player.targetZ = nextZ;
+            player.isMoving = true; moveEnemies();
+        }
+    });
+
+    // 左旋回
+    btnLeft.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (!canInput()) return;
+        player.targetAngle += Math.PI / 2;
+        updateDirectionVectors();
+    });
+
+    // 右旋回
+    btnRight.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (!canInput()) return;
+        player.targetAngle -= Math.PI / 2;
+        updateDirectionVectors();
+    });
+
+    // 攻撃
+    btnAttack.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (!canInput()) return;
+        executeAttack();
+    });
+
+    // ジャンプ
+    btnJump.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (!canInput()) return;
+        executeJump();
+    });
+}
+
 initStage();
+
+// ステージ初期化の最後などで実行する
+setupTouchControls();
+
 animate();
+
+
 
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
