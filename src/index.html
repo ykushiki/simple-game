@@ -2,130 +2,35 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ちいさな島冒険譚 - Prototype v2</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: sans-serif; user-select: none; }
-        #ui {
-            position: absolute; top: 15px; left: 15px; color: white;
-            background: rgba(0,0,0,0.75); padding: 20px; border-radius: 10px;
-            pointer-events: none; min-width: 200px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        }
-        h1 { margin: 0 0 10px 0; font-size: 20px; color: #55ff55; letter-spacing: 1px; }
-        .status-item { margin: 8px 0; font-size: 14px; font-weight: bold; }
-        #hp-bar-container {
-            width: 100%; height: 12px; background: #441111; border-radius: 6px; overflow: hidden; margin-top: 4px;
-        }
-        #hp-bar {
-            width: 100%; height: 100%; background: #ff3333; transition: width 0.2s;
-        }
-        #controls { font-size: 11px; color: #aaa; margin-top: 15px; line-height: 1.4; border-top: 1px solid #444; padding-top: 10px; }
-
-        /* ダブルタップでのズームや画面のスクロールを禁止して操作性を上げる */
-        body, button {
-            touch-action: none;
-            user-select: none;
-        }
-
-        #virtual-pad {
-            position: fixed;
-            bottom: 20px;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            padding: 0 30px;
-            box-sizing: border-box;
-            pointer-events: none; /* ゲーム画面の邪魔をしない */
-            z-index: 100;
-            background: rgba(0, 0, 0, 0.14);
-            backdrop-filter: blur(6px);
-        }
-
-        .pad-cluster {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            pointer-events: auto; /* ボタン単体はタップ可能にする */
-        }
-
-        .horizontal-btns {
-            display: flex;
-            gap: 20px;
-        }
-
-        /* 十字キーの共通スタイル */
-        .pad-btn {
-            width: 60px;
-            height: 60px;
-            background: rgba(255, 255, 255, 0.2);
-            border: 2px solid rgba(255, 255, 255, 0.4);
-            border-radius: 50%;
-            color: white;
-            font-size: 20px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 4px 0;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        }
-
-        /* 攻撃・ジャンプボタンのスタイル */
-        #action-cluster {
-            flex-direction: row;
-            gap: 15px;
-            align-self: flex-end;
-            margin-bottom: 20px;
-        }
-
-        .action-btn {
-            width: 70px;
-            height: 70px;
-            background: rgba(255, 100, 100, 0.3);
-            border: 2px solid rgba(255, 100, 100, 0.6);
-            border-radius: 50%;
-            color: white;
-            font-size: 16px;
-            font-weight: bold;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        }
-        #btn-jump {
-            background: rgba(100, 200, 255, 0.3);
-            border-color: rgba(100, 200, 255, 0.6);
-        }
-
-        /* タップされた瞬間のエフェクト */
-        .pad-btn:active, .action-btn:active {
-            background: rgba(255, 255, 255, 0.6) !important;
-            color: black;
-        }
-
-        /* PCなどの広い画面ではバーチャルパッドを隠す（オプション） */
-        @media (min-width: 768px) {
-            #virtual-pad { display: none; }
-        }
-    </style>
-    <!-- Three.js を読み込み -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>島RPGプロトタイプ</title>
+    <!-- Three.js の読み込み -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-    <div id="ui">
-        <h1>ちいさな島冒険譚</h1>
-        <div class="status-item" id="stage-display">STAGE: 1</div>
-        <div class="status-item">
-            HP: <span id="hp-text">10 / 10</span>
-            <div id="hp-bar-container"><div id="hp-bar"></div></div>
-        </div>
-        
-        <div id="controls">
-            【操作】矢印キー / WASD<br>
-            【ルール】黄色のゴールへ向かえ！<br>
-            赤色の敵は一歩ごとに追ってくるぞ。<br>
-            茶色のトゲを踏むとダメージ！
+    <!-- 左上端に固定したステータスUI -->
+    <div id="status-container">
+        <div id="stage-display">STAGE: 1</div>
+        <div id="hp-container">
+            <span class="label">HP:</span>
+            <div class="hp-bar-bg">
+                <div id="hp-bar"></div>
+            </div>
+            <span id="hp-text">15 / 15</span>
         </div>
     </div>
+
+    <!-- スマホ画面を占有する初期UI（操作を始めると消えます） -->
+    <div id="ui">
+        <h2>島RPG プロトタイプ</h2>
+        <div id="controls">
+            【前進/後退】▲ / ▼ (W / S)<br>
+            【左右旋回】◀ / ▶ (A / D)<br>
+            【アクション】攻撃 / 跳躍 (Space / E)
+        </div>
+    </div>
+
     <!-- 画面上の操作パッドUI -->
     <div id="virtual-pad">
         <!-- 左側：移動十字キー -->
@@ -145,7 +50,7 @@
         </div>
     </div>
 
-    <!-- ゲームロジックの読み込み -->
+    <!-- 最後にゲームロジックを読み込む -->
     <script src="game.js"></script>
 </body>
 </html>
