@@ -24,12 +24,15 @@ let hasMovedOnce = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x4ca6ff); 
-scene.fog = new THREE.FogExp2(0xd6ebff, 0.015); 
+scene.fog = new THREE.FogExp2(0xa7d8f0, 0.010); 
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.88;
+renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.domElement.style.position = 'fixed';
@@ -70,6 +73,135 @@ let playerMixer = null;
 let playerAnimations = {};
 let playerClock = new THREE.Clock();
 const gltfLoader = new THREE.GLTFLoader();
+const occlusionRaycaster = new THREE.Raycaster();
+const transparentOccluderMeshes = new Set();
+
+function cloneObjectMaterials(root) {
+    if (!root) return;
+    root.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        if (Array.isArray(child.material)) {
+            child.material = child.material.map((mat) => (mat ? mat.clone() : mat));
+        } else {
+            child.material = child.material.clone();
+        }
+    });
+}
+
+function markAsPlayerOccluder(root) {
+    if (!root) return;
+    root.traverse((child) => {
+        if (child.isMesh) child.userData.isPlayerOccluder = true;
+    });
+}
+
+function applyMeshOccluderTransparency(mesh, opacity = 0.35) {
+    if (!mesh || !mesh.material) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    materials.forEach((mat) => {
+        if (!mat) return;
+        if (!mat.userData.__occlusionOriginal) {
+            mat.userData.__occlusionOriginal = {
+                transparent: mat.transparent,
+                opacity: mat.opacity,
+                depthWrite: mat.depthWrite
+            };
+        }
+        mat.transparent = true;
+        mat.opacity = Math.min(opacity, mat.opacity);
+        mat.depthWrite = false;
+        mat.needsUpdate = true;
+    });
+}
+
+function restoreMeshOccluderTransparency(mesh) {
+    if (!mesh || !mesh.material) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    materials.forEach((mat) => {
+        if (!mat || !mat.userData.__occlusionOriginal) return;
+        const original = mat.userData.__occlusionOriginal;
+        mat.transparent = original.transparent;
+        mat.opacity = original.opacity;
+        mat.depthWrite = original.depthWrite;
+        mat.needsUpdate = true;
+    });
+}
+
+function clearPlayerOccludersTransparency() {
+    transparentOccluderMeshes.forEach((mesh) => restoreMeshOccluderTransparency(mesh));
+    transparentOccluderMeshes.clear();
+}
+
+function isDescendantOf(node, parent) {
+    let cur = node;
+    while (cur) {
+        if (cur === parent) return true;
+        cur = cur.parent;
+    }
+    return false;
+}
+
+function updatePlayerOcclusionTransparency() {
+    clearPlayerOccludersTransparency();
+    if (!playerGroup) return;
+
+    const playerPos = new THREE.Vector3();
+    playerGroup.getWorldPosition(playerPos);
+    const rayDir = playerPos.clone().sub(camera.position);
+    const distance = rayDir.length();
+    if (distance <= 0.001) return;
+
+    occlusionRaycaster.set(camera.position, rayDir.normalize());
+    occlusionRaycaster.far = Math.max(0.01, distance - 0.15);
+
+    const hits = occlusionRaycaster.intersectObjects(gameGroup.children, true);
+    hits.forEach((hit) => {
+        const obj = hit.object;
+        if (isDescendantOf(obj, playerGroup)) return;
+        if (!obj.userData.isPlayerOccluder) return;
+        applyMeshOccluderTransparency(obj, 0.35);
+        transparentOccluderMeshes.add(obj);
+    });
+}
+
+function createGroundTexture(type) {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    if (type === 'grass') {
+        ctx.fillStyle = '#7cc66d';
+        ctx.fillRect(0, 0, size, size);
+        for (let i = 0; i < 2000; i++) {
+            const x = Math.random() * size;
+            const y = Math.random() * size;
+            const g = 110 + Math.floor(Math.random() * 80);
+            ctx.fillStyle = `rgb(${40 + Math.floor(Math.random() * 25)}, ${g}, ${45 + Math.floor(Math.random() * 25)})`;
+            ctx.fillRect(x, y, 2, 2);
+        }
+    } else {
+        ctx.fillStyle = '#e7d8a8';
+        ctx.fillRect(0, 0, size, size);
+        for (let i = 0; i < 2500; i++) {
+            const x = Math.random() * size;
+            const y = Math.random() * size;
+            const c = 175 + Math.floor(Math.random() * 55);
+            ctx.fillStyle = `rgb(${c}, ${c - 15}, ${c - 55})`;
+            ctx.fillRect(x, y, 1.5, 1.5);
+        }
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1, 1);
+    texture.encoding = THREE.sRGBEncoding;
+    texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    return texture;
+}
+
 function prepareLoadedModel(model, { scale = 1, y = 0, rotationY = -Math.PI / 2 } = {}) {
     model.scale.set(scale, scale, scale);
     model.position.set(0, y, 0);
@@ -147,7 +279,7 @@ function initStage() {
             rz = Math.floor(Math.random() * (MAP_SIZE - 2)) + 1;
         } while (mapData[rx][rz] !== 0 || (rx === 1 && rz === 1) || (rx === goal.x && rz === goal.z));
         
-        enemies.push({ x: rx, z: rz, targetX: rx, targetZ: rz, mesh: null, angle: 0, targetAngle: 0, mixer: null, animations: {}, isMoving: false });
+        enemies.push({ x: rx, z: rz, targetX: rx, targetZ: rz, mesh: null, angle: 0, targetAngle: 0, mixer: null, animations: {}, isMoving: false, isDying: false });
     }
 
     const tileGeo = new THREE.BoxGeometry(0.95, 0.2, 0.95);
@@ -155,7 +287,15 @@ function initStage() {
     const trapGeo = new THREE.ConeGeometry(0.25, 0.5, 4);
     const itemGeo = new THREE.SphereGeometry(0.2, 8, 8);
 
-    const tileMat = new THREE.MeshPhongMaterial({ color: 0x55b85d, flatShading: true });
+    const trapPlacements = [];
+    const attackableBlockPlacements = [];
+    const boundaryRockPlacements = [];
+    const boundaryPalmPlacements = [];
+
+    const grassTexture = createGroundTexture('grass');
+    const sandTexture = createGroundTexture('sand');
+
+    const tileMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: grassTexture });
     const wallMat = new THREE.MeshPhongMaterial({ color: 0xdfcda3, flatShading: true });
     const trapMat = new THREE.MeshPhongMaterial({ color: 0xcc4444, flatShading: true });
     const itemMat = new THREE.MeshStandardMaterial({ color: 0x33ffcc, roughness: 0.1 });
@@ -172,13 +312,29 @@ function initStage() {
                 wall.position.set(x, 0.45, z);
                 wall.castShadow = true; wall.receiveShadow = true;
                 gameGroup.add(wall);
-                mapMeshes[x][z] = wall;
+
+                const isBoundary = (x === 0 || z === 0 || x === MAP_SIZE - 1 || z === MAP_SIZE - 1);
+                if (isBoundary) {
+                    markAsPlayerOccluder(wall);
+                    // 外周は Rock(1-5) と PalmTree(1-3) をランダムに混在させる
+                    if (Math.random() < 0.35) {
+                        const palmVariant = 1 + Math.floor(Math.random() * 3);
+                        boundaryPalmPlacements.push({ x, z, variant: palmVariant, fallback: wall });
+                    } else {
+                        const rockVariant = 1 + Math.floor(Math.random() * 5);
+                        boundaryRockPlacements.push({ x, z, variant: rockVariant, fallback: wall });
+                    }
+                } else {
+                    mapMeshes[x][z] = wall;
+                    attackableBlockPlacements.push({ x, z, fallback: wall });
+                }
             } else if (mapData[x][z] === 2) {
                 const trap = new THREE.Mesh(trapGeo, trapMat);
                 trap.position.set(x, 0.25, z);
                 trap.castShadow = true;
                 gameGroup.add(trap);
                 mapMeshes[x][z] = trap;
+                trapPlacements.push({ x, z, fallback: trap });
             } else if (mapData[x][z] === 3) {
                 const item = new THREE.Mesh(itemGeo, itemMat);
                 item.position.set(x, 0.25, z);
@@ -188,7 +344,91 @@ function initStage() {
         }
     }
 
-    const beachMat = new THREE.MeshPhongMaterial({ color: 0xeedd99, flatShading: true }); 
+    // 罠: Prop_Bomb / 攻撃可能ブロック: Prop_Bucket / 外周: Environment_Rock_1-5
+    if (gltfLoader) {
+        if (trapPlacements.length > 0) {
+            gltfLoader.load('../models/Prop_Bomb.gltf', (gltf) => {
+                const baseBomb = prepareLoadedModel(gltf.scene, { scale: 0.8, y: 0, rotationY: 0 });
+                normalizeAndCenterModel(baseBomb);
+
+                trapPlacements.forEach(({ x, z, fallback }) => {
+                    const bomb = baseBomb.clone(true);
+                    cloneObjectMaterials(bomb);
+                    bomb.position.set(x, 0, z);
+                    if (fallback) gameGroup.remove(fallback);
+                    gameGroup.add(bomb);
+                    mapMeshes[x][z] = bomb;
+                });
+            }, undefined, (error) => {
+                console.error('Prop_Bomb 読み込み失敗:', error);
+            });
+        }
+
+        if (attackableBlockPlacements.length > 0) {
+            gltfLoader.load('../models/Prop_Bucket.gltf', (gltf) => {
+                const baseBucket = prepareLoadedModel(gltf.scene, { scale: 1.0, y: 0, rotationY: 0 });
+                normalizeAndCenterModel(baseBucket);
+
+                attackableBlockPlacements.forEach(({ x, z, fallback }) => {
+                    const bucket = baseBucket.clone(true);
+                    cloneObjectMaterials(bucket);
+                    markAsPlayerOccluder(bucket);
+                    bucket.position.set(x, 0, z);
+                    if (fallback) gameGroup.remove(fallback);
+                    gameGroup.add(bucket);
+                    mapMeshes[x][z] = bucket;
+                });
+            }, undefined, (error) => {
+                console.error('Prop_Bucket 読み込み失敗:', error);
+            });
+        }
+
+        for (let i = 1; i <= 5; i++) {
+            const targets = boundaryRockPlacements.filter((p) => p.variant === i);
+            if (targets.length === 0) continue;
+
+            gltfLoader.load(`../models/Environment_Rock_${i}.gltf`, (gltf) => {
+                const baseRock = prepareLoadedModel(gltf.scene, { scale: 1.0, y: 0, rotationY: 0 });
+                normalizeAndCenterModel(baseRock);
+
+                targets.forEach(({ x, z, fallback }) => {
+                    const rock = baseRock.clone(true);
+                    cloneObjectMaterials(rock);
+                    markAsPlayerOccluder(rock);
+                    rock.position.set(x, 0, z);
+                    rock.rotation.y = Math.random() * Math.PI * 2;
+                    if (fallback) gameGroup.remove(fallback);
+                    gameGroup.add(rock);
+                });
+            }, undefined, (error) => {
+                console.error(`Environment_Rock_${i} 読み込み失敗:`, error);
+            });
+        }
+
+        for (let i = 1; i <= 3; i++) {
+            const targets = boundaryPalmPlacements.filter((p) => p.variant === i);
+            if (targets.length === 0) continue;
+
+            gltfLoader.load(`../models/Environment_PalmTree_${i}.gltf`, (gltf) => {
+                const basePalm = prepareLoadedModel(gltf.scene, { scale: 1.0, y: 0, rotationY: 0 });
+                normalizeAndCenterModel(basePalm);
+
+                targets.forEach(({ x, z, fallback }) => {
+                    const palm = basePalm.clone(true);
+                    cloneObjectMaterials(palm);
+                    markAsPlayerOccluder(palm);
+                    palm.position.set(x, 0, z);
+                    palm.rotation.y = Math.random() * Math.PI * 2;
+                    if (fallback) gameGroup.remove(fallback);
+                    gameGroup.add(palm);
+                });
+            }, undefined, (error) => {
+                console.error(`Environment_PalmTree_${i} 読み込み失敗:`, error);
+            });
+        }
+    }
+
+    const beachMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: sandTexture }); 
     const beachThickness = 3; 
     for (let x = -beachThickness; x < MAP_SIZE + beachThickness; x++) {
         for (let z = -beachThickness; z < MAP_SIZE + beachThickness; z++) {
@@ -289,6 +529,16 @@ function initStage() {
                     console.warn('THREE.SkeletonUtils が利用できません。通常の clone() を使用します。');
                     enemyModel = baseEnemyModel.clone();
                 }
+
+                // クローン間でマテリアルが共有されると発光が全敵に波及するため、個体ごとに複製する
+                enemyModel.traverse((child) => {
+                    if (!child.isMesh || !child.material) return;
+                    if (Array.isArray(child.material)) {
+                        child.material = child.material.map((mat) => (mat ? mat.clone() : mat));
+                    } else {
+                        child.material = child.material.clone();
+                    }
+                });
 
                 // 2. クローンした個々の敵に対して位置と回転を設定
                 enemyModel.position.set(enemy.x, 0.3, enemy.z);
@@ -542,8 +792,11 @@ function executeAttack() {
 
     const hitEnemy = enemies.find(e => e.x === targetX && e.z === targetZ);
     if (hitEnemy) {
-        // 先にロジックから除外（重複ヒット防止）
-        enemies = enemies.filter(e => e !== hitEnemy);
+        // 先に死亡中フラグを立てて、移動対象から除外する
+        hitEnemy.isDying = true;
+        hitEnemy.isMoving = false;
+        hitEnemy.targetX = hitEnemy.x;
+        hitEnemy.targetZ = hitEnemy.z;
         moveEnemies();
 
         // Sword の中間タイミングで敵の Dead アニメーションを開始する
@@ -559,10 +812,14 @@ function executeAttack() {
 
                 // Dead 終了後にメッシュを削除する
                 const deadDuration = deadAction.getClip().duration * 1000;
-                setTimeout(() => gameGroup.remove(hitEnemy.mesh), deadDuration);
+                setTimeout(() => {
+                    if (hitEnemy.mesh) gameGroup.remove(hitEnemy.mesh);
+                    enemies = enemies.filter(e => e !== hitEnemy);
+                }, deadDuration);
             } else {
                 // Dead アニメーションがない場合はすぐ消す
-                gameGroup.remove(hitEnemy.mesh);
+                if (hitEnemy.mesh) gameGroup.remove(hitEnemy.mesh);
+                enemies = enemies.filter(e => e !== hitEnemy);
             }
         }, halfSword);
         return;
@@ -596,6 +853,7 @@ function executeJump() {
 
 function moveEnemies() {
     enemies.forEach(enemy => {
+        if (enemy.isDying) return;
         let dx = Math.sign(player.x - enemy.x);
         let dz = Math.sign(player.z - enemy.z);
         let nextX = enemy.x + dx; let nextZ = enemy.z;
@@ -644,7 +902,15 @@ function handleTileEvents() {
         if (enemy.x === player.x && enemy.z === player.z) {
             applyDamage(3);
             reactToDamage();
-            gameGroup.remove(enemy.mesh); enemies = enemies.filter(e => e !== enemy);
+
+            const swordAction = playEnemyAnim(enemy, 'Sword');
+            if (swordAction) {
+                const swordDuration = swordAction.getClip().duration * 1000;
+                setTimeout(() => {
+                    if (!enemy.isDying && enemy.mesh) playEnemyAnim(enemy, 'Idle');
+                }, swordDuration);
+            }
+
             if (player.hp <= 0) { alert("敵に敗北してしまった…"); stage = 1; player.hp = player.maxHp; initStage(); }
         }
     });
@@ -894,6 +1160,8 @@ function animate() {
             }
         }
     }
+
+    updatePlayerOcclusionTransparency();
 
     renderer.render(scene, camera);
 }

@@ -162,13 +162,7 @@ body {
 .dpad-btn.down { bottom: 6px; left: 38px; }
 
 #joystick-zone {
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.12);
-    border: 2px solid rgba(255, 255, 255, 0.25);
-    position: relative;
-    touch-action: none;
+    display: none;
 }
 
 #action-cluster {
