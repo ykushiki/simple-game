@@ -381,25 +381,45 @@ function setupTouchControls() {
 
     const bindPress = (button, onPress, onRelease) => {
         const handlePress = (e) => {
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            if (e.type === 'pointerdown' && e.pointerType === 'mouse' && e.button !== 0) return;
+            if (e.type === 'pointerdown' && e.pointerType === 'touch') {
+                button.dataset.pressed = 'true';
+            }
             e.preventDefault();
             e.stopPropagation();
             removeStartUI();
             if (onPress) onPress();
         };
         const handleRelease = (e) => {
+            if (e.type === 'mouseup' && e.button !== 0) return;
+            if (e.type === 'pointerup' && e.pointerType === 'mouse' && e.button !== 0) return;
+            if (e.type === 'touchend' || e.type === 'touchcancel' || e.type === 'pointercancel') {
+                delete button.dataset.pressed;
+            }
             e.preventDefault();
             e.stopPropagation();
             if (onRelease) onRelease();
         };
 
-        button.addEventListener('touchstart', handlePress, { passive: false });
-        button.addEventListener('mousedown', handlePress);
-        button.addEventListener('pointerdown', handlePress);
-        button.addEventListener('touchend', handleRelease, { passive: false });
-        button.addEventListener('touchcancel', handleRelease, { passive: false });
-        button.addEventListener('mouseup', handleRelease);
-        button.addEventListener('pointerup', handleRelease);
-        button.addEventListener('mouseleave', handleRelease);
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        if (window.PointerEvent) {
+            button.addEventListener('pointerdown', handlePress);
+            button.addEventListener('pointerup', handleRelease);
+            button.addEventListener('pointercancel', handleRelease);
+            button.addEventListener('pointerleave', handleRelease);
+        } else {
+            button.addEventListener('touchstart', handlePress, { passive: false });
+            button.addEventListener('touchend', handleRelease, { passive: false });
+            button.addEventListener('touchcancel', handleRelease, { passive: false });
+            button.addEventListener('mousedown', handlePress);
+            button.addEventListener('mouseup', handleRelease);
+            button.addEventListener('mouseleave', handleRelease);
+        }
     };
 
     bindPress(btnUp, () => {
