@@ -97,7 +97,7 @@ body {
 #ui h2 { margin-bottom: 10px; font-size: 18px; color: #4ca6ff; }
 #controls { font-size: 13px; line-height: 1.6; color: #ccc; }
 
-/* バーチャルパッド（横画面でも消えないようレスポンシブ制限を撤去） */
+/* バーチャルパッド */
 #virtual-pad {
     position: fixed;
     bottom: 20px;
@@ -105,6 +105,7 @@ body {
     width: 100%;
     display: flex;
     justify-content: space-between;
+    align-items: flex-end;
     padding: 0 4% 0 4%;
     box-sizing: border-box;
     pointer-events: none;
@@ -113,41 +114,59 @@ body {
 
 .pad-cluster {
     display: flex;
-    flex-direction: column;
     align-items: center;
     pointer-events: auto;
 }
 
-.horizontal-btns {
-    display: flex;
-    gap: 15px;
+#move-cluster {
+    justify-content: flex-start;
+    gap: 16px;
+    align-items: flex-end;
 }
 
-/* コントローラーボタンの形と押しやすさ */
-.pad-btn {
-    width: 55px;
-    height: 55px;
-    background: rgba(255, 255, 255, 0.25);
-    border: 2px solid rgba(255, 255, 255, 0.5);
-    border-radius: 50%;
+#dpad {
+    width: 110px;
+    height: 110px;
+    position: relative;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.12);
+    border: 2px solid rgba(255, 255, 255, 0.25);
+}
+
+.dpad-btn {
+    position: absolute;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.28);
     color: white;
-    font-size: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 2px 0;
+    font-size: 16px;
+}
+
+.dpad-btn.up { top: 6px; left: 38px; }
+.dpad-btn.left { left: 6px; top: 38px; }
+.dpad-btn.right { right: 6px; top: 38px; }
+.dpad-btn.down { bottom: 6px; left: 38px; }
+
+#joystick-zone {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    position: relative;
+    touch-action: none;
 }
 
 #action-cluster {
-    flex-direction: row;
     gap: 12px;
-    align-self: flex-end;
     margin-bottom: 5px;
 }
 
 .action-btn {
-    width: 65px;
-    height: 65px;
+    width: 70px;
+    height: 70px;
     background: rgba(255, 80, 80, 0.4);
     border: 2px solid rgba(255, 80, 80, 0.7);
     border-radius: 50%;
@@ -155,13 +174,13 @@ body {
     font-size: 15px;
     font-weight: bold;
 }
+
 #btn-jump {
     background: rgba(60, 160, 255, 0.4);
     border-color: rgba(60, 160, 255, 0.7);
 }
 
-/* タップフィードバック */
-.pad-btn:active, .action-btn:active {
+.action-btn:active {
     background: rgba(255, 255, 255, 0.7) !important;
     color: black;
 }

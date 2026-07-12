@@ -35,17 +35,16 @@
 
     <!-- 画面上の操作パッドUI -->
     <div id="virtual-pad">
-        <!-- 左側：移動十字キー -->
         <div class="pad-cluster" id="move-cluster">
-            <button class="pad-btn" id="btn-up">▲</button>
-            <div class="horizontal-btns">
-                <button class="pad-btn" id="btn-left">◀</button>
-                <button class="pad-btn" id="btn-right">▶</button>
+            <div id="dpad">
+                <button class="dpad-btn up" id="btn-up" data-dir="up">▲</button>
+                <button class="dpad-btn left" id="btn-left" data-dir="left">◀</button>
+                <button class="dpad-btn right" id="btn-right" data-dir="right">▶</button>
+                <button class="dpad-btn down" id="btn-down" data-dir="down">▼</button>
             </div>
-            <button class="pad-btn" id="btn-down">▼</button>
+            <div id="joystick-zone" aria-label="virtual joystick"></div>
         </div>
 
-        <!-- 右側：アクションボタン -->
         <div class="pad-cluster" id="action-cluster">
             <button class="action-btn" id="btn-attack">攻撃</button>
             <button class="action-btn" id="btn-jump">跳躍</button>
@@ -53,6 +52,7 @@
     </div>
 
     <!-- 最後にゲームロジックを読み込む -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.2/nipplejs.min.js"></script>
     <script src="game.js"></script>
 </body>
 </html>

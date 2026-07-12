@@ -60,8 +60,8 @@ scene.add(gameGroup);
 
 let playerGroup, goalMesh; 
 const MOVE_SPEED = 0.15; 
-let upHoldTimeout = null;
-let upHoldInterval = null;
+let joystickInput = { active: false, move: 0, turn: 0 };
+let joystickRepeatTimer = null;
 
 function initStage() {
     while(gameGroup.children.length > 0){
@@ -219,15 +219,29 @@ function updateCommitInfo() {
     const commitInfo = document.getElementById('commit-info');
     if (!commitInfo) return;
 
-    fetch('./git-info.json')
+    const applyInfo = (data) => {
+        if (data && data.commit && data.date) {
+            commitInfo.innerHTML = `commit: ${data.commit}<br>date: ${data.date}`;
+            return true;
+        }
+        commitInfo.innerHTML = 'commit: unavailable<br>date: unavailable';
+        return false;
+    };
+
+    fetch('./git-info.json', { cache: 'no-store' })
         .then((response) => response.ok ? response.json() : null)
-        .then((data) => {
-            if (data && data.commit && data.date) {
-                commitInfo.innerHTML = `commit: ${data.commit}<br>date: ${data.date}`;
-            }
-        })
+        .then(applyInfo)
         .catch(() => {
-            commitInfo.innerHTML = 'commit: unavailable<br>date: unavailable';
+            try {
+                const fallback = window.__GIT_INFO__;
+                if (fallback) {
+                    applyInfo(fallback);
+                } else {
+                    commitInfo.innerHTML = 'commit: unavailable<br>date: unavailable';
+                }
+            } catch (error) {
+                commitInfo.innerHTML = 'commit: unavailable<br>date: unavailable';
+            }
         });
 }
 
@@ -351,125 +365,146 @@ function removeStartUI() {
     }
 }
 
-function stopUpHoldRepeat() {
-    if (upHoldTimeout) {
-        clearTimeout(upHoldTimeout);
-        upHoldTimeout = null;
-    }
-    if (upHoldInterval) {
-        clearInterval(upHoldInterval);
-        upHoldInterval = null;
+function stopJoystickRepeat() {
+    if (joystickRepeatTimer) {
+        clearInterval(joystickRepeatTimer);
+        joystickRepeatTimer = null;
     }
 }
 
-function startUpHoldRepeat() {
-    stopUpHoldRepeat();
+function applyJoystickInput() {
+    if (!joystickInput.active || player.isMoving || player.hp <= 0) return;
+
+    if (joystickInput.turn !== 0) {
+        player.targetAngle += joystickInput.turn * Math.PI / 2;
+        updateDirectionVectors();
+    }
+
+    if (joystickInput.move !== 0) {
+        executeGridMove(joystickInput.move);
+    }
+}
+
+function startJoystickRepeat() {
+    stopJoystickRepeat();
     removeStartUI();
-
-    const canInput = () => !player.isMoving && player.hp > 0;
-
-    if (!canInput()) return;
-
-    executeGridMove(1);
-
-    upHoldTimeout = setTimeout(() => {
-        upHoldTimeout = null;
-        upHoldInterval = setInterval(() => {
-            if (canInput()) {
-                executeGridMove(1);
-            }
-        }, 180);
-    }, 320);
+    applyJoystickInput();
+    joystickRepeatTimer = setInterval(() => {
+        if (joystickInput.active) {
+            applyJoystickInput();
+        }
+    }, 220);
 }
 
-// ★ スマホ用タッチイベント（HTMLロード後に確実にバインド）
 function setupTouchControls() {
+    const btnAttack = document.getElementById('btn-attack');
+    const btnJump = document.getElementById('btn-jump');
     const btnUp = document.getElementById('btn-up');
     const btnDown = document.getElementById('btn-down');
     const btnLeft = document.getElementById('btn-left');
     const btnRight = document.getElementById('btn-right');
-    const btnAttack = document.getElementById('btn-attack');
-    const btnJump = document.getElementById('btn-jump');
+    const joystickZone = document.getElementById('joystick-zone');
 
-    if (!btnUp || !btnDown || !btnLeft || !btnRight || !btnAttack || !btnJump) return;
+    if (!joystickZone) return;
 
     const canInput = () => !player.isMoving && player.hp > 0;
 
-    const bindPress = (button, onPress, onRelease) => {
-        let isPressed = false;
-
-        const resetState = () => {
-            isPressed = false;
-            if (onRelease) onRelease();
-        };
-
+    const bindAction = (button, onPress) => {
         const handlePress = (e) => {
-            if (e.type === 'mousedown' && e.button !== 0) return;
-            if (e.type === 'pointerdown' && e.pointerType === 'mouse' && e.button !== 0) return;
-            if (isPressed) return;
-            isPressed = true;
             e.preventDefault();
             e.stopPropagation();
             removeStartUI();
-            if (onPress) onPress();
+            if (canInput()) onPress();
         };
 
-        const handleRelease = (e) => {
-            if (e.type === 'mouseup' && e.button !== 0) return;
-            if (e.type === 'pointerup' && e.pointerType === 'mouse' && e.button !== 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            if (isPressed) resetState();
-        };
-
+        button.addEventListener('touchstart', handlePress, { passive: false });
+        button.addEventListener('mousedown', handlePress);
         button.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
         });
-
-        if (window.PointerEvent) {
-            button.addEventListener('pointerdown', handlePress);
-            button.addEventListener('pointerup', handleRelease);
-            button.addEventListener('pointercancel', handleRelease);
-            button.addEventListener('pointerleave', handleRelease);
-        } else {
-            button.addEventListener('touchstart', handlePress, { passive: false });
-            button.addEventListener('touchend', handleRelease, { passive: false });
-            button.addEventListener('touchcancel', handleRelease, { passive: false });
-            button.addEventListener('mousedown', handlePress);
-            button.addEventListener('mouseup', handleRelease);
-            button.addEventListener('mouseleave', handleRelease);
-        }
     };
 
-    bindPress(btnUp, () => {
-        if (canInput()) startUpHoldRepeat();
-    }, () => stopUpHoldRepeat());
+    if (btnAttack) {
+        bindAction(btnAttack, () => executeAttack());
+    }
 
-    bindPress(btnDown, () => {
-        if (canInput()) executeGridMove(-1);
+    if (btnJump) {
+        bindAction(btnJump, () => executeJump());
+    }
+
+    const bindDirection = (button, direction) => {
+        if (!button) return;
+        const handlePress = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            removeStartUI();
+            if (!canInput()) return;
+            if (direction === 'up') executeGridMove(1);
+            if (direction === 'down') executeGridMove(-1);
+            if (direction === 'left') { player.targetAngle += Math.PI / 2; updateDirectionVectors(); }
+            if (direction === 'right') { player.targetAngle -= Math.PI / 2; updateDirectionVectors(); }
+        };
+        button.addEventListener('touchstart', handlePress, { passive: false });
+        button.addEventListener('mousedown', handlePress);
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    };
+
+    bindDirection(btnUp, 'up');
+    bindDirection(btnDown, 'down');
+    bindDirection(btnLeft, 'left');
+    bindDirection(btnRight, 'right');
+
+    const joystick = nipplejs.create({
+        zone: joystickZone,
+        size: 120,
+        color: 'rgba(255,255,255,0.55)',
+        multitouch: false,
+        restOpacity: 0.8,
+        mode: 'dynamic'
     });
 
-    bindPress(btnLeft, () => {
-        if (canInput()) { player.targetAngle += Math.PI / 2; updateDirectionVectors(); }
+    joystick.on('start', () => {
+        joystickInput.active = true;
+        startJoystickRepeat();
     });
 
-    bindPress(btnRight, () => {
-        if (canInput()) { player.targetAngle -= Math.PI / 2; updateDirectionVectors(); }
+    joystick.on('move', (evt, data) => {
+        const x = data.vector.x;
+        const y = data.vector.y;
+
+        if (Math.abs(x) > Math.abs(y)) {
+            joystickInput.turn = x > 0 ? -1 : 1;
+            joystickInput.move = 0;
+        } else {
+            joystickInput.turn = 0;
+            joystickInput.move = y < 0 ? 1 : y > 0 ? -1 : 0;
+        }
+
+        if (Math.abs(x) < 0.15 && Math.abs(y) < 0.15) {
+            joystickInput.active = false;
+            stopJoystickRepeat();
+        }
     });
 
-    bindPress(btnAttack, () => {
-        if (canInput()) executeAttack();
-    });
-
-    bindPress(btnJump, () => {
-        if (canInput()) executeJump();
+    joystick.on('end', () => {
+        joystickInput.active = false;
+        joystickInput.move = 0;
+        joystickInput.turn = 0;
+        stopJoystickRepeat();
     });
 }
 
 // ページの読み込み完了を待ってから初期化・タッチ登録を行う
 window.addEventListener('DOMContentLoaded', () => {
     initStage();
+    window.__GIT_INFO__ = {
+        commit: 'c5c08ab-fix vkey',
+        date: '2026-07-12 09:49'
+    };
     updateCommitInfo();
     setupTouchControls();
     animate();
