@@ -215,6 +215,22 @@ function updateUI() {
     document.getElementById('hp-bar').style.width = `${Math.max(0, hpPercent)}%`;
 }
 
+function updateCommitInfo() {
+    const commitInfo = document.getElementById('commit-info');
+    if (!commitInfo) return;
+
+    fetch('./git-info.json')
+        .then((response) => response.ok ? response.json() : null)
+        .then((data) => {
+            if (data && data.commit && data.date) {
+                commitInfo.innerHTML = `commit: ${data.commit}<br>date: ${data.date}`;
+            }
+        })
+        .catch(() => {
+            commitInfo.innerHTML = 'commit: unavailable<br>date: unavailable';
+        });
+}
+
 // キーボード操作の受付
 window.addEventListener('keydown', (e) => {
     if (player.isMoving || player.hp <= 0) return;
@@ -380,28 +396,30 @@ function setupTouchControls() {
     const canInput = () => !player.isMoving && player.hp > 0;
 
     const bindPress = (button, onPress, onRelease) => {
-        let isHandled = false;
+        let isPressed = false;
+
+        const resetState = () => {
+            isPressed = false;
+            if (onRelease) onRelease();
+        };
 
         const handlePress = (e) => {
             if (e.type === 'mousedown' && e.button !== 0) return;
             if (e.type === 'pointerdown' && e.pointerType === 'mouse' && e.button !== 0) return;
-            if (isHandled) return;
-            isHandled = true;
+            if (isPressed) return;
+            isPressed = true;
             e.preventDefault();
             e.stopPropagation();
             removeStartUI();
             if (onPress) onPress();
         };
+
         const handleRelease = (e) => {
             if (e.type === 'mouseup' && e.button !== 0) return;
             if (e.type === 'pointerup' && e.pointerType === 'mouse' && e.button !== 0) return;
-            if (e.type === 'touchend' || e.type === 'touchcancel' || e.type === 'pointercancel') {
-                isHandled = false;
-                return;
-            }
             e.preventDefault();
             e.stopPropagation();
-            if (onRelease) onRelease();
+            if (isPressed) resetState();
         };
 
         button.addEventListener('click', (e) => {
@@ -452,6 +470,7 @@ function setupTouchControls() {
 // ページの読み込み完了を待ってから初期化・タッチ登録を行う
 window.addEventListener('DOMContentLoaded', () => {
     initStage();
+    updateCommitInfo();
     setupTouchControls();
     animate();
 });
