@@ -90,6 +90,59 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+.score-label {
+    margin-left: 8px;
+    color: #ffdf7a;
+}
+
+#score-text {
+    min-width: 42px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: bold;
+    color: #ffe08a;
+    font-variant-numeric: tabular-nums;
+}
+
+#gameover-score {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 200;
+    min-width: 320px;
+    text-align: center;
+    background: rgba(8, 12, 18, 0.88);
+    border: 2px solid rgba(255, 215, 120, 0.7);
+    border-radius: 14px;
+    padding: 24px 28px;
+    color: #fff;
+    backdrop-filter: blur(6px);
+}
+
+#gameover-score .go-title {
+    font-size: 32px;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    color: #ff7d7d;
+    margin-bottom: 8px;
+}
+
+#gameover-score .go-score-label {
+    font-size: 18px;
+    color: #ffe08a;
+    margin-bottom: 6px;
+}
+
+#gameover-score-value {
+    font-size: 64px;
+    line-height: 1.05;
+    font-weight: bold;
+    color: #ffd35e;
+    text-shadow: 0 0 18px rgba(255, 190, 64, 0.45);
+    font-variant-numeric: tabular-nums;
+}
+
 /* 初期の案内画面UI */
 #ui {
     position: fixed;

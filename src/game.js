@@ -1,6 +1,11 @@
 // --- ゲームの状態管理 ---
 let stage = 1;
 let MAP_SIZE = 15;
+let score = 0;
+let isGameOverProcessing = false;
+let enemyTurnId = 0;
+let suppressEnemyAttackThisTurn = false;
+const SCORE_ENEMY = 50;
 let player = { 
     x: 1, z: 1, 
     targetX: 1, targetZ: 1, 
@@ -369,10 +374,23 @@ function initStage() {
                 const rand = Math.random();
                 if (rand < 0.18) mapData[x][z] = 1;     
                 else if (rand < 0.24) mapData[x][z] = 2; 
-                else if (rand < 0.27) mapData[x][z] = 3; 
                 else mapData[x][z] = 0; 
             }
         }
+    }
+
+    // 回復アイテムは各フィールドで1つだけ配置する
+    const itemCandidates = [];
+    for (let x = 1; x < MAP_SIZE - 1; x++) {
+        for (let z = 1; z < MAP_SIZE - 1; z++) {
+            if (mapData[x][z] === 0 && !(x === 1 && z === 1) && !(x === goal.x && z === goal.z)) {
+                itemCandidates.push({ x, z });
+            }
+        }
+    }
+    if (itemCandidates.length > 0) {
+        const itemPos = itemCandidates[Math.floor(Math.random() * itemCandidates.length)];
+        mapData[itemPos.x][itemPos.z] = 3;
     }
 
     const enemyCount = 3 + Math.floor(stage * 1.2);
@@ -383,7 +401,7 @@ function initStage() {
             rz = Math.floor(Math.random() * (MAP_SIZE - 2)) + 1;
         } while (mapData[rx][rz] !== 0 || (rx === 1 && rz === 1) || (rx === goal.x && rz === goal.z));
         
-        enemies.push({ x: rx, z: rz, targetX: rx, targetZ: rz, mesh: null, angle: 0, targetAngle: 0, mixer: null, animations: {}, isMoving: false, isDying: false });
+        enemies.push({ x: rx, z: rz, targetX: rx, targetZ: rz, mesh: null, angle: 0, targetAngle: 0, mixer: null, animations: {}, isMoving: false, isDying: false, movedOnTurn: 0 });
     }
 
     const tileGeo = new THREE.BoxGeometry(0.95, 0.2, 0.95);
@@ -563,6 +581,27 @@ function initStage() {
                 console.error(`Environment_PalmTree_${i} 読み込み失敗:`, error);
             });
         }
+
+        // ゴール外側の海に大型船を配置
+        gltfLoader.load('../models/Ship_Large.gltf', (gltf) => {
+            const ship = prepareLoadedModel(gltf.scene, { scale: 1.0, y: 0, rotationY: 0 });
+            normalizeAndCenterModel(ship);
+            cloneObjectMaterials(ship);
+
+            // ゴール位置から海側（フィールド外）へ配置
+            const shipX = goal.x + 2;
+            const shipZ = goal.z + 2;
+            ship.position.set(shipX, -0.14, shipZ);
+
+            // 船首をゴール方向に向ける
+            const toGoalX = goal.x - shipX;
+            const toGoalZ = goal.z - shipZ;
+            ship.rotation.y = Math.atan2(toGoalX, toGoalZ);
+
+            gameGroup.add(ship);
+        }, undefined, (error) => {
+            console.error('Ship_Large 読み込み失敗:', error);
+        });
     }
 
     const beachMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: sandTexture }); 
@@ -718,6 +757,45 @@ function updateUI() {
     document.getElementById('hp-text').innerText = `${player.hp} / ${player.maxHp}`;
     const hpPercent = (player.hp / player.maxHp) * 100;
     document.getElementById('hp-bar').style.width = `${Math.max(0, hpPercent)}%`;
+
+    const scoreText = document.getElementById('score-text');
+    if (scoreText) scoreText.innerText = `${score}`;
+}
+
+function addScore(points) {
+    if (points <= 0) return;
+    score += points;
+    updateUI();
+}
+
+function showGameOverScore() {
+    const panel = document.getElementById('gameover-score');
+    const value = document.getElementById('gameover-score-value');
+    if (!panel || !value) return;
+    value.innerText = `${score}`;
+    panel.classList.remove('hidden-overlay');
+}
+
+function hideGameOverScore() {
+    const panel = document.getElementById('gameover-score');
+    if (panel) panel.classList.add('hidden-overlay');
+}
+
+function handleGameOver(message) {
+    if (isGameOverProcessing) return;
+    isGameOverProcessing = true;
+    showGameOverScore();
+    if (message) console.log(message);
+
+    setTimeout(() => {
+        stage = 1;
+        player.hp = player.maxHp;
+        score = 0;
+        hideGameOverScore();
+        updateUI();
+        initStage();
+        isGameOverProcessing = false;
+    }, 1400);
 }
 
 function updateOverlayVisibility() {
@@ -814,6 +892,64 @@ function playEnemyAnim(enemy, name, fadeTime = 0.15) {
     return action;
 }
 
+function faceEnemyToPlayer(enemy) {
+    if (!enemy) return;
+    const dx = player.x - enemy.x;
+    const dz = player.z - enemy.z;
+    if (dx === 0 && dz === 0) return;
+
+    const angleToPlayer = Math.atan2(dx, dz);
+    enemy.targetAngle = angleToPlayer;
+    enemy.angle = angleToPlayer;
+    if (enemy.mesh) enemy.mesh.rotation.y = angleToPlayer;
+}
+
+function findEnemyRespawnTile(excludeEnemy) {
+    const candidates = [];
+    for (let x = 1; x < MAP_SIZE - 1; x++) {
+        for (let z = 1; z < MAP_SIZE - 1; z++) {
+            if (mapData[x][z] !== 0) continue;
+            if ((x === player.x && z === player.z) || (x === goal.x && z === goal.z)) continue;
+            const manhattanDistanceToPlayer = Math.abs(x - player.x) + Math.abs(z - player.z);
+            if (manhattanDistanceToPlayer < 3) continue;
+            const occupied = enemies.some((e) => e !== excludeEnemy && e.x === x && e.z === z);
+            if (!occupied) candidates.push({ x, z });
+        }
+    }
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function respawnEnemy(enemy) {
+    if (!enemy) return;
+    const tile = findEnemyRespawnTile(enemy);
+    if (!tile) return;
+
+    enemy.x = tile.x;
+    enemy.z = tile.z;
+    enemy.targetX = tile.x;
+    enemy.targetZ = tile.z;
+    enemy.isMoving = false;
+    enemy.isDying = false;
+    enemy.isFlashing = false;
+    enemy.shouldActOnce = false;
+    enemy.skipCounterOnce = false;
+    enemy.hasCountered = false;
+    enemy.movedOnTurn = 0;
+    enemy.targetAngle = 0;
+    enemy.angle = 0;
+
+    if (enemy.mesh) {
+        enemy.mesh.visible = true;
+        enemy.mesh.position.set(enemy.x, 0, enemy.z);
+        enemy.mesh.rotation.y = enemy.angle;
+    }
+
+    if (enemy.mixer && enemy.animations && enemy.animations['Idle']) {
+        playEnemyAnim(enemy, 'Idle');
+    }
+}
+
 function resolveHeadOnClash() {
     const playerFromX = player.x;
     const playerFromZ = player.z;
@@ -843,7 +979,8 @@ function resolveHeadOnClash() {
         enemy.isMoving = false;
     });
 
-    // 敵は消さずに Sword、プレイヤーは被ダメリアクション
+    // 敵は攻撃前にプレイヤー方向を向き、Sword を行う
+    faceEnemyToPlayer(clashEnemy);
     const swordAction = playEnemyAnim(clashEnemy, 'Sword');
     if (swordAction) {
         const swordDuration = swordAction.getClip().duration * 1000;
@@ -854,6 +991,9 @@ function resolveHeadOnClash() {
 
     applyDamage(3);
     reactToDamage();
+    if (player.hp <= 0) {
+        handleGameOver("敵に敗北してしまった…");
+    }
     return true;
 }
 
@@ -916,10 +1056,46 @@ function updateDirectionVectors() {
     player.dirZ = Math.round(Math.cos(player.targetAngle));
 }
 
+function handleBlockedByEnemyCollision(stepX, stepZ) {
+    // 進行方向の逆側へノックバック先を作る
+    const knockbackX = player.x - stepX;
+    const knockbackZ = player.z - stepZ;
+
+    const canKnockback = mapData[knockbackX]
+        && mapData[knockbackX][knockbackZ] !== 1
+        && !isEnemyOccupied(knockbackX, knockbackZ)
+        && !(knockbackX === player.x && knockbackZ === player.z);
+
+    if (canKnockback) {
+        player.prevX = knockbackX;
+        player.prevZ = knockbackZ;
+    }
+
+    applyDamage(3);
+    reactToDamage();
+    if (player.hp <= 0) {
+        handleGameOver("敵に敗北してしまった…");
+    }
+}
+
 function executeGridMove(moveStep) {
     const nextX = player.x + player.dirX * moveStep;
     const nextZ = player.z + player.dirZ * moveStep;
-    if (mapData[nextX] && mapData[nextX][nextZ] !== 1) {
+    if (!mapData[nextX] || mapData[nextX][nextZ] === 1) return;
+
+    if (isEnemyOccupied(nextX, nextZ)) {
+        handleBlockedByEnemyCollision(player.dirX * moveStep, player.dirZ * moveStep);
+        return;
+    }
+
+    {
+        // 攻撃せず移動する場合、移動開始時に隣接敵がいればそのターンの敵攻撃を無効化
+        const hadAdjacentEnemy = enemies.some((enemy) => {
+            if (enemy.isDying || enemy.isFlashing) return false;
+            return (Math.abs(enemy.x - player.x) + Math.abs(enemy.z - player.z)) === 1;
+        });
+        suppressEnemyAttackThisTurn = hadAdjacentEnemy;
+
         player.prevX = player.x;
         player.prevZ = player.z;
         player.targetX = nextX; player.targetZ = nextZ;
@@ -945,6 +1121,9 @@ function executeAttack() {
 
     const hitEnemy = enemies.find(e => e.x === targetX && e.z === targetZ);
     if (hitEnemy) {
+        // 被弾時はプレイヤー方向を向く
+        faceEnemyToPlayer(hitEnemy);
+
         // 敵は消さずに赤発光し、1回の行動機会を与える
         hitEnemy.shouldActOnce = true;
         // 被弾した敵はこの行動中の反撃のみキャンセルする
@@ -970,13 +1149,13 @@ function executeAttack() {
                 // Dead 終了後にメッシュを削除する
                 const deadDuration = deadAction.getClip().duration * 1000;
                 setTimeout(() => {
-                    if (hitEnemy.mesh) gameGroup.remove(hitEnemy.mesh);
-                    enemies = enemies.filter(e => e !== hitEnemy);
+                    addScore(SCORE_ENEMY);
+                    respawnEnemy(hitEnemy);
                 }, deadDuration);
             } else {
                 // Dead アニメーションがない場合はすぐ消す
-                if (hitEnemy.mesh) gameGroup.remove(hitEnemy.mesh);
-                enemies = enemies.filter(e => e !== hitEnemy);
+                addScore(SCORE_ENEMY);
+                respawnEnemy(hitEnemy);
             }
         }, halfSword + 260 + 300);
         moveEnemies();
@@ -1007,13 +1186,29 @@ function executeAttack() {
                 }, halfSword + 260);
             }
         }
+        return;
     }
+
 }
 
 function executeJump() {
     const landX = player.x + player.dirX * 2;
     const landZ = player.z + player.dirZ * 2;
-    if (mapData[landX] && mapData[landX][landZ] !== 1) {
+    if (!mapData[landX] || mapData[landX][landZ] === 1) return;
+
+    if (isEnemyOccupied(landX, landZ)) {
+        handleBlockedByEnemyCollision(player.dirX, player.dirZ);
+        return;
+    }
+
+    {
+        // 攻撃せず移動する場合、移動開始時に隣接敵がいればそのターンの敵攻撃を無効化
+        const hadAdjacentEnemy = enemies.some((enemy) => {
+            if (enemy.isDying || enemy.isFlashing) return false;
+            return (Math.abs(enemy.x - player.x) + Math.abs(enemy.z - player.z)) === 1;
+        });
+        suppressEnemyAttackThisTurn = hadAdjacentEnemy;
+
         player.prevX = player.x;
         player.prevZ = player.z;
         player.targetX = landX; player.targetZ = landZ;
@@ -1027,29 +1222,55 @@ function executeJump() {
 }
 
 function moveEnemies() {
-    // 1) 移動フェーズ: 隣接敵は移動しない（攻撃候補）、キャンセル敵は行動しない
+    enemyTurnId += 1;
+    const currentEnemyTurn = enemyTurnId;
+    const suppressAttack = suppressEnemyAttackThisTurn;
+    suppressEnemyAttackThisTurn = false;
+
+    // 1) 移動フェーズ: キャンセル敵は行動しない
     enemies.forEach(enemy => {
         if (enemy.isDying) return;
         if (enemy.skipCounterOnce) return;
 
-        const adjacentToPlayer = (Math.abs(enemy.x - player.x) + Math.abs(enemy.z - player.z)) === 1;
-        if (adjacentToPlayer) return;
+        const dx = Math.sign(player.x - enemy.x);
+        const dz = Math.sign(player.z - enemy.z);
+        const preferX = Math.abs(player.x - enemy.x) >= Math.abs(player.z - enemy.z);
 
-        let dx = Math.sign(player.x - enemy.x);
-        let dz = Math.sign(player.z - enemy.z);
-        let nextX = enemy.x + dx;
-        let nextZ = enemy.z;
+        const candidateMoves = preferX
+            ? [
+                { x: enemy.x + dx, z: enemy.z },
+                { x: enemy.x, z: enemy.z + dz },
+                { x: enemy.x, z: enemy.z + 1 },
+                { x: enemy.x, z: enemy.z - 1 },
+                { x: enemy.x + 1, z: enemy.z },
+                { x: enemy.x - 1, z: enemy.z }
+            ]
+            : [
+                { x: enemy.x, z: enemy.z + dz },
+                { x: enemy.x + dx, z: enemy.z },
+                { x: enemy.x + 1, z: enemy.z },
+                { x: enemy.x - 1, z: enemy.z },
+                { x: enemy.x, z: enemy.z + 1 },
+                { x: enemy.x, z: enemy.z - 1 }
+            ];
 
-        // 障害物・他敵・プレイヤー位置への侵入を避ける
-        if (!mapData[nextX] || mapData[nextX][nextZ] === 1 || isEnemyAt(nextX, nextZ) || (nextX === player.x && nextZ === player.z)) {
-            nextX = enemy.x;
-            nextZ = enemy.z + dz;
-        }
+        const canMoveTo = (tx, tz) => {
+            if (!mapData[tx] || mapData[tx][tz] === 1) return false;
+            if (tx === goal.x && tz === goal.z) return false;
+            if (tx === player.x && tz === player.z) return false;
+            if (tx === enemy.x && tz === enemy.z) return false;
+            const occupiedByOtherEnemy = enemies.some((e) => e !== enemy && ((e.x === tx && e.z === tz) || (e.targetX === tx && e.targetZ === tz)));
+            return !occupiedByOtherEnemy;
+        };
 
-        if (mapData[nextX] && mapData[nextX][nextZ] !== 1 && !isEnemyAt(nextX, nextZ) && !(nextX === goal.x && nextZ === goal.z) && !(nextX === player.x && nextZ === player.z)) {
+        const next = candidateMoves.find((m) => canMoveTo(m.x, m.z));
+        if (next) {
+            const nextX = next.x;
+            const nextZ = next.z;
             enemy.targetX = nextX;
             enemy.targetZ = nextZ;
             enemy.isMoving = true;
+            enemy.movedOnTurn = currentEnemyTurn;
 
             const mdx = nextX - enemy.x;
             const mdz = nextZ - enemy.z;
@@ -1065,9 +1286,11 @@ function moveEnemies() {
         }
     });
 
-    // 2) 攻撃フェーズ: 隣接敵のみ攻撃、ただしキャンセル敵は1回スキップ
+    // 2) 攻撃フェーズ: 隣接敵のみ攻撃、ただし同ターンに移動した敵は攻撃しない
     enemies.forEach(enemy => {
+        if (suppressAttack) return;
         if (enemy.isDying || enemy.isFlashing) return;
+        if (enemy.movedOnTurn === currentEnemyTurn) return;
 
         const dx = Math.abs(enemy.x - player.x);
         const dz = Math.abs(enemy.z - player.z);
@@ -1081,6 +1304,7 @@ function moveEnemies() {
 
         if (!enemy.hasCountered) {
             enemy.hasCountered = true;
+            faceEnemyToPlayer(enemy);
             const swordAction = playEnemyAnim(enemy, 'Sword');
             if (swordAction) {
                 const swordDuration = swordAction.getClip().duration * 1000;
@@ -1091,7 +1315,7 @@ function moveEnemies() {
             }
             applyDamage(3);
             reactToDamage();
-            if (player.hp <= 0) { alert("敵に敗北してしまった…"); stage = 1; player.hp = player.maxHp; initStage(); }
+            if (player.hp <= 0) { handleGameOver("敵に敗北してしまった…"); }
         }
     });
 
@@ -1114,6 +1338,11 @@ function moveEnemies() {
 function isEnemyAt(x, z) { 
     // 現在位置と目標位置の両方をチェック（重複防止）
     return enemies.some(e => (e.x === x && e.z === z) || (e.targetX === x && e.targetZ === z)); 
+}
+
+function isEnemyOccupied(x, z) {
+    // 死亡中の敵は占有扱いしない
+    return enemies.some((e) => !e.isDying && e.x === x && e.z === z);
 }
 
 function updateCameraImmediate() {
@@ -1168,11 +1397,11 @@ function handleTileEvents() {
             }, 260);
         }
         
-        if (player.hp <= 0) { alert("罠にかかって倒れてしまった…"); stage = 1; player.hp = player.maxHp; initStage(); return; }
+        if (player.hp <= 0) { handleGameOver("罠にかかって倒れてしまった…"); return; }
     }
     enemies.forEach(enemy => {
         // Death 中または赤発光中の敵は当たり判定なし
-        if (enemy.x === player.x && enemy.z === player.z && !enemy.isDying && !enemy.isFlashing) {
+        if (enemy.x === player.x && enemy.z === player.z && !enemy.isDying && !enemy.isFlashing && enemy.movedOnTurn !== enemyTurnId) {
             applyDamage(3);
             reactToDamage();
 
@@ -1184,7 +1413,7 @@ function handleTileEvents() {
                 }, swordDuration);
             }
 
-            if (player.hp <= 0) { alert("敵に敗北してしまった…"); stage = 1; player.hp = player.maxHp; initStage(); }
+            if (player.hp <= 0) { handleGameOver("敵に敗北してしまった…"); }
         }
     });
     if (player.x === goal.x && player.z === goal.z) {
