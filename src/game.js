@@ -203,32 +203,96 @@ function updateExplosions(deltaTime) {
 }
 
 function createGroundTexture(type) {
-    const size = 128;
+    const size = 512; // テクスチャサイズを拡大
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(size, size);
+    const data = imageData.data;
 
     if (type === 'grass') {
-        ctx.fillStyle = '#7cc66d';
-        ctx.fillRect(0, 0, size, size);
-        for (let i = 0; i < 2000; i++) {
+        // 複雑なノイズレイヤーで自然な草地を生成
+        const baseColor = { r: 124, g: 198, b: 109 };
+        
+        // ベースカラーで塗りつぶし
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = baseColor.r;
+            data[i + 1] = baseColor.g;
+            data[i + 2] = baseColor.b;
+            data[i + 3] = 255;
+        }
+        
+        // 複数レイヤーのノイズを追加
+        for (let layer = 0; layer < 3; layer++) {
+            const scale = Math.pow(2, layer);
+            const intensity = (3 - layer) * 0.3;
+            
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    // シンプルなパーリンノイズのような効果
+                    const nx = (x * scale) % 256;
+                    const ny = (y * scale) % 256;
+                    const noise = Math.sin(nx * 0.1) * Math.cos(ny * 0.1) * 0.5 + 0.5;
+                    
+                    if (Math.random() < noise * intensity) {
+                        const idx = (y * size + x) * 4;
+                        const variation = (Math.random() - 0.5) * 40;
+                        data[idx] = Math.max(0, Math.min(255, baseColor.r + variation * 0.8));
+                        data[idx + 1] = Math.max(0, Math.min(255, baseColor.g + variation));
+                        data[idx + 2] = Math.max(0, Math.min(255, baseColor.b + variation * 0.6));
+                    }
+                }
+            }
+        }
+        
+        // より詳細なストロークを追加（草っぽい線）
+        for (let i = 0; i < 800; i++) {
             const x = Math.random() * size;
             const y = Math.random() * size;
-            const g = 110 + Math.floor(Math.random() * 80);
-            ctx.fillStyle = `rgb(${40 + Math.floor(Math.random() * 25)}, ${g}, ${45 + Math.floor(Math.random() * 25)})`;
-            ctx.fillRect(x, y, 2, 2);
+            const angle = Math.random() * Math.PI * 2;
+            const length = 3 + Math.random() * 8;
+            
+            ctx.globalAlpha = 0.3 + Math.random() * 0.4;
+            ctx.strokeStyle = `rgba(${60 + Math.random() * 30}, ${100 + Math.random() * 60}, ${50 + Math.random() * 20}, 0.6)`;
+            ctx.lineWidth = 1 + Math.random() * 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
+            ctx.stroke();
         }
+        
+        ctx.putImageData(imageData, 0, 0);
     } else {
-        ctx.fillStyle = '#e7d8a8';
-        ctx.fillRect(0, 0, size, size);
-        for (let i = 0; i < 2500; i++) {
-            const x = Math.random() * size;
-            const y = Math.random() * size;
-            const c = 175 + Math.floor(Math.random() * 55);
-            ctx.fillStyle = `rgb(${c}, ${c - 15}, ${c - 55})`;
-            ctx.fillRect(x, y, 1.5, 1.5);
+        // 砂地テクスチャ
+        const baseColor = { r: 231, g: 216, b: 168 };
+        
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = baseColor.r;
+            data[i + 1] = baseColor.g;
+            data[i + 2] = baseColor.b;
+            data[i + 3] = 255;
         }
+        
+        // 砂粒テクスチャを複数レイヤーで追加
+        for (let layer = 0; layer < 2; layer++) {
+            const density = layer === 0 ? 0.15 : 0.08;
+            
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    if (Math.random() < density) {
+                        const idx = (y * size + x) * 4;
+                        const grain = Math.random();
+                        const variation = (grain - 0.5) * 50;
+                        data[idx] = Math.max(0, Math.min(255, baseColor.r + variation * 0.9));
+                        data[idx + 1] = Math.max(0, Math.min(255, baseColor.g + variation * 0.7));
+                        data[idx + 2] = Math.max(0, Math.min(255, baseColor.b + variation * 0.8));
+                    }
+                }
+            }
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
     }
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -236,7 +300,7 @@ function createGroundTexture(type) {
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(1, 1);
     texture.encoding = THREE.sRGBEncoding;
-    texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     return texture;
 }
 
