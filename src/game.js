@@ -30,6 +30,12 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.domElement.style.position = 'fixed';
+renderer.domElement.style.top = '0';
+renderer.domElement.style.left = '0';
+renderer.domElement.style.width = '100%';
+renderer.domElement.style.height = '100%';
+renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -54,6 +60,8 @@ scene.add(gameGroup);
 
 let playerGroup, goalMesh; 
 const MOVE_SPEED = 0.15; 
+let upHoldTimeout = null;
+let upHoldInterval = null;
 
 function initStage() {
     while(gameGroup.children.length > 0){
@@ -327,6 +335,37 @@ function removeStartUI() {
     }
 }
 
+function stopUpHoldRepeat() {
+    if (upHoldTimeout) {
+        clearTimeout(upHoldTimeout);
+        upHoldTimeout = null;
+    }
+    if (upHoldInterval) {
+        clearInterval(upHoldInterval);
+        upHoldInterval = null;
+    }
+}
+
+function startUpHoldRepeat() {
+    stopUpHoldRepeat();
+    removeStartUI();
+
+    const canInput = () => !player.isMoving && player.hp > 0;
+
+    if (!canInput()) return;
+
+    executeGridMove(1);
+
+    upHoldTimeout = setTimeout(() => {
+        upHoldTimeout = null;
+        upHoldInterval = setInterval(() => {
+            if (canInput()) {
+                executeGridMove(1);
+            }
+        }, 180);
+    }, 320);
+}
+
 // ★ スマホ用タッチイベント（HTMLロード後に確実にバインド）
 function setupTouchControls() {
     const btnUp = document.getElementById('btn-up');
@@ -336,37 +375,54 @@ function setupTouchControls() {
     const btnAttack = document.getElementById('btn-attack');
     const btnJump = document.getElementById('btn-jump');
 
-    if (!btnUp) return; 
+    if (!btnUp || !btnDown || !btnLeft || !btnRight || !btnAttack || !btnJump) return;
 
     const canInput = () => !player.isMoving && player.hp > 0;
 
-    btnUp.addEventListener('touchstart', (e) => {
-        e.preventDefault(); removeStartUI();
-        if (canInput()) executeGridMove(1);
-    });
+    const bindPress = (button, onPress, onRelease) => {
+        const handlePress = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            removeStartUI();
+            if (onPress) onPress();
+        };
+        const handleRelease = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (onRelease) onRelease();
+        };
 
-    btnDown.addEventListener('touchstart', (e) => {
-        e.preventDefault(); removeStartUI();
+        button.addEventListener('touchstart', handlePress, { passive: false });
+        button.addEventListener('mousedown', handlePress);
+        button.addEventListener('pointerdown', handlePress);
+        button.addEventListener('touchend', handleRelease, { passive: false });
+        button.addEventListener('touchcancel', handleRelease, { passive: false });
+        button.addEventListener('mouseup', handleRelease);
+        button.addEventListener('pointerup', handleRelease);
+        button.addEventListener('mouseleave', handleRelease);
+    };
+
+    bindPress(btnUp, () => {
+        if (canInput()) startUpHoldRepeat();
+    }, () => stopUpHoldRepeat());
+
+    bindPress(btnDown, () => {
         if (canInput()) executeGridMove(-1);
     });
 
-    btnLeft.addEventListener('touchstart', (e) => {
-        e.preventDefault(); removeStartUI();
+    bindPress(btnLeft, () => {
         if (canInput()) { player.targetAngle += Math.PI / 2; updateDirectionVectors(); }
     });
 
-    btnRight.addEventListener('touchstart', (e) => {
-        e.preventDefault(); removeStartUI();
+    bindPress(btnRight, () => {
         if (canInput()) { player.targetAngle -= Math.PI / 2; updateDirectionVectors(); }
     });
 
-    btnAttack.addEventListener('touchstart', (e) => {
-        e.preventDefault(); removeStartUI();
+    bindPress(btnAttack, () => {
         if (canInput()) executeAttack();
     });
 
-    btnJump.addEventListener('touchstart', (e) => {
-        e.preventDefault(); removeStartUI();
+    bindPress(btnJump, () => {
         if (canInput()) executeJump();
     });
 }
