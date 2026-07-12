@@ -380,12 +380,13 @@ function setupTouchControls() {
     const canInput = () => !player.isMoving && player.hp > 0;
 
     const bindPress = (button, onPress, onRelease) => {
+        let isHandled = false;
+
         const handlePress = (e) => {
             if (e.type === 'mousedown' && e.button !== 0) return;
             if (e.type === 'pointerdown' && e.pointerType === 'mouse' && e.button !== 0) return;
-            if (e.type === 'pointerdown' && e.pointerType === 'touch') {
-                button.dataset.pressed = 'true';
-            }
+            if (isHandled) return;
+            isHandled = true;
             e.preventDefault();
             e.stopPropagation();
             removeStartUI();
@@ -395,7 +396,7 @@ function setupTouchControls() {
             if (e.type === 'mouseup' && e.button !== 0) return;
             if (e.type === 'pointerup' && e.pointerType === 'mouse' && e.button !== 0) return;
             if (e.type === 'touchend' || e.type === 'touchcancel' || e.type === 'pointercancel') {
-                delete button.dataset.pressed;
+                isHandled = false;
             }
             e.preventDefault();
             e.stopPropagation();
