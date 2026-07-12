@@ -397,6 +397,7 @@ function setupTouchControls() {
             if (e.type === 'pointerup' && e.pointerType === 'mouse' && e.button !== 0) return;
             if (e.type === 'touchend' || e.type === 'touchcancel' || e.type === 'pointercancel') {
                 isHandled = false;
+                return;
             }
             e.preventDefault();
             e.stopPropagation();
