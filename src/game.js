@@ -74,7 +74,7 @@ let playerAnimations = {};
 let playerClock = new THREE.Clock();
 const gltfLoader = new THREE.GLTFLoader();
 const occlusionRaycaster = new THREE.Raycaster();
-const transparentOccluderMeshes = new Set();
+const occludedOccluderMeshes = new Set();
 
 function cloneObjectMaterials(root) {
     if (!root) return;
@@ -95,41 +95,19 @@ function markAsPlayerOccluder(root) {
     });
 }
 
-function applyMeshOccluderTransparency(mesh, opacity = 0.35) {
-    if (!mesh || !mesh.material) return;
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    materials.forEach((mat) => {
-        if (!mat) return;
-        if (!mat.userData.__occlusionOriginal) {
-            mat.userData.__occlusionOriginal = {
-                transparent: mat.transparent,
-                opacity: mat.opacity,
-                depthWrite: mat.depthWrite
-            };
-        }
-        mat.transparent = true;
-        mat.opacity = Math.min(opacity, mat.opacity);
-        mat.depthWrite = false;
-        mat.needsUpdate = true;
-    });
+function hideOccluderMesh(mesh) {
+    if (!mesh) return;
+    mesh.visible = false;
 }
 
-function restoreMeshOccluderTransparency(mesh) {
-    if (!mesh || !mesh.material) return;
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    materials.forEach((mat) => {
-        if (!mat || !mat.userData.__occlusionOriginal) return;
-        const original = mat.userData.__occlusionOriginal;
-        mat.transparent = original.transparent;
-        mat.opacity = original.opacity;
-        mat.depthWrite = original.depthWrite;
-        mat.needsUpdate = true;
-    });
+function showOccluderMesh(mesh) {
+    if (!mesh) return;
+    mesh.visible = true;
 }
 
-function clearPlayerOccludersTransparency() {
-    transparentOccluderMeshes.forEach((mesh) => restoreMeshOccluderTransparency(mesh));
-    transparentOccluderMeshes.clear();
+function clearPlayerOccluders() {
+    occludedOccluderMeshes.forEach((mesh) => showOccluderMesh(mesh));
+    occludedOccluderMeshes.clear();
 }
 
 function isDescendantOf(node, parent) {
@@ -141,8 +119,8 @@ function isDescendantOf(node, parent) {
     return false;
 }
 
-function updatePlayerOcclusionTransparency() {
-    clearPlayerOccludersTransparency();
+function updatePlayerOcclusionVisibility() {
+    clearPlayerOccluders();
     if (!playerGroup) return;
 
     const playerPos = new THREE.Vector3();
@@ -159,8 +137,8 @@ function updatePlayerOcclusionTransparency() {
         const obj = hit.object;
         if (isDescendantOf(obj, playerGroup)) return;
         if (!obj.userData.isPlayerOccluder) return;
-        applyMeshOccluderTransparency(obj, 0.35);
-        transparentOccluderMeshes.add(obj);
+        hideOccluderMesh(obj);
+        occludedOccluderMeshes.add(obj);
     });
 }
 
@@ -481,10 +459,13 @@ function initStage() {
     const enemyGeo = new THREE.ConeGeometry(0.3, 0.6, 4);
     const enemyMat = new THREE.MeshPhongMaterial({ color: 0xdd2222, flatShading: true });
     enemies.forEach(enemy => {
-        enemy.mesh = new THREE.Mesh(enemyGeo, enemyMat);
-        enemy.mesh.position.set(enemy.x, 0.3, enemy.z);
-        enemy.mesh.castShadow = true;
-        gameGroup.add(enemy.mesh);
+        enemy.primitiveGroup = new THREE.Group();
+        const primitiveEnemyMesh = new THREE.Mesh(enemyGeo, enemyMat);
+        primitiveEnemyMesh.position.set(enemy.x, 0, enemy.z);
+        primitiveEnemyMesh.castShadow = true;
+        enemy.primitiveGroup.add(primitiveEnemyMesh);
+        gameGroup.add(enemy.primitiveGroup);
+        enemy.mesh = enemy.primitiveGroup;
     });
 
     // プレイヤーモデルの読み込み
@@ -541,8 +522,15 @@ function initStage() {
                 });
 
                 // 2. クローンした個々の敵に対して位置と回転を設定
-                enemyModel.position.set(enemy.x, 0.3, enemy.z);
+                enemyModel.position.set(enemy.x, 0, enemy.z);
                 enemyModel.rotation.set(0, Math.PI / 2, 0);
+                
+                // プリミティブメッシュを削除してモデルに置き換え
+                if (enemy.primitiveGroup) {
+                    gameGroup.remove(enemy.primitiveGroup);
+                    enemy.primitiveGroup = null;
+                }
+                
                 enemy.mesh = enemyModel;
                 gameGroup.add(enemy.mesh);
 
@@ -827,10 +815,23 @@ function executeAttack() {
 
     if (mapData[targetX] && (mapData[targetX][targetZ] === 1 || mapData[targetX][targetZ] === 2)) {
         if (targetX > 0 && targetX < MAP_SIZE - 1 && targetZ > 0 && targetZ < MAP_SIZE - 1) {
-            if (mapMeshes[targetX][targetZ]) gameGroup.remove(mapMeshes[targetX][targetZ]);
-            mapData[targetX][targetZ] = 0;
-            mapMeshes[targetX][targetZ] = null;
-            moveEnemies();
+            if (mapMeshes[targetX][targetZ]) {
+                // Sword の中間タイミングで赤発光、終了時に消す（敵と同じロジック）
+                setTimeout(() => {
+                    if (mapMeshes[targetX][targetZ]) {
+                        flashModelDamageRed(mapMeshes[targetX][targetZ], 260);
+                    }
+                }, halfSword);
+                
+                setTimeout(() => {
+                    if (mapMeshes[targetX][targetZ]) {
+                        gameGroup.remove(mapMeshes[targetX][targetZ]);
+                        mapMeshes[targetX][targetZ] = null;
+                    }
+                    mapData[targetX][targetZ] = 0;
+                    moveEnemies();
+                }, swordDuration);
+            }
         }
     }
 }
@@ -894,8 +895,37 @@ function handleTileEvents() {
         gameGroup.remove(itemMeshes[player.x][player.z]); mapData[player.x][player.z] = 0;
     }
     if (mapData[player.x][player.z] === 2) {
+        const trapX = player.x;
+        const trapZ = player.z;
+        
+        // プレイヤーをバックさせる（敵と同じknockback処理）
+        const canKnockback = mapData[player.prevX]
+            && mapData[player.prevX][player.prevZ] !== 1
+            && (player.prevX !== player.x || player.prevZ !== player.z);
+        if (canKnockback) {
+            player.targetX = player.prevX;
+            player.targetZ = player.prevZ;
+            player.isMoving = true;
+            player.isJumping = false;
+            player.jumpTimer = 0;
+        }
+        
+        // ダメージ処理（赤発光とHitReact）
         applyDamage(2);
         reactToDamage();
+        
+        // トラップを赤発光させて消す
+        if (mapMeshes[trapX][trapZ]) {
+            flashModelDamageRed(mapMeshes[trapX][trapZ], 260);
+            setTimeout(() => {
+                if (mapMeshes[trapX][trapZ]) {
+                    gameGroup.remove(mapMeshes[trapX][trapZ]);
+                    mapMeshes[trapX][trapZ] = null;
+                    mapData[trapX][trapZ] = 0;
+                }
+            }, 260);
+        }
+        
         if (player.hp <= 0) { alert("罠にかかって倒れてしまった…"); stage = 1; player.hp = player.maxHp; initStage(); return; }
     }
     enemies.forEach(enemy => {
@@ -1109,7 +1139,7 @@ function animate() {
             
             enemies.forEach(enemy => {
                 enemy.x = enemy.targetX; enemy.z = enemy.targetZ;
-                if (enemy.mesh) enemy.mesh.position.set(enemy.x, 0.3, enemy.z);
+                if (enemy.mesh) enemy.mesh.position.set(enemy.x, 0, enemy.z);
                 // 移動完了時に Idle に戻す
                 if (enemy.isMoving) {
                     enemy.isMoving = false;
@@ -1161,7 +1191,7 @@ function animate() {
         }
     }
 
-    updatePlayerOcclusionTransparency();
+    updatePlayerOcclusionVisibility();
 
     renderer.render(scene, camera);
 }
