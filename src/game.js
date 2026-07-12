@@ -1083,7 +1083,7 @@ function executeGridMove(moveStep) {
     const nextZ = player.z + player.dirZ * moveStep;
     if (!mapData[nextX] || mapData[nextX][nextZ] === 1) return;
 
-    if (isEnemyOccupied(nextX, nextZ)) {
+    if (isEnemyAt(nextX, nextZ)) {
         handleBlockedByEnemyCollision(player.dirX * moveStep, player.dirZ * moveStep);
         return;
     }
@@ -1196,7 +1196,7 @@ function executeJump() {
     const landZ = player.z + player.dirZ * 2;
     if (!mapData[landX] || mapData[landX][landZ] === 1) return;
 
-    if (isEnemyOccupied(landX, landZ)) {
+    if (isEnemyAt(landX, landZ)) {
         handleBlockedByEnemyCollision(player.dirX, player.dirZ);
         return;
     }
@@ -1226,6 +1226,8 @@ function moveEnemies() {
     const currentEnemyTurn = enemyTurnId;
     const suppressAttack = suppressEnemyAttackThisTurn;
     suppressEnemyAttackThisTurn = false;
+    const reservedPlayerX = player.isMoving ? player.targetX : player.x;
+    const reservedPlayerZ = player.isMoving ? player.targetZ : player.z;
 
     // 1) 移動フェーズ: キャンセル敵は行動しない
     enemies.forEach(enemy => {
@@ -1257,7 +1259,7 @@ function moveEnemies() {
         const canMoveTo = (tx, tz) => {
             if (!mapData[tx] || mapData[tx][tz] === 1) return false;
             if (tx === goal.x && tz === goal.z) return false;
-            if (tx === player.x && tz === player.z) return false;
+            if (tx === reservedPlayerX && tz === reservedPlayerZ) return false;
             if (tx === enemy.x && tz === enemy.z) return false;
             const occupiedByOtherEnemy = enemies.some((e) => e !== enemy && ((e.x === tx && e.z === tz) || (e.targetX === tx && e.targetZ === tz)));
             return !occupiedByOtherEnemy;
