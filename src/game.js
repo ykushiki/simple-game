@@ -75,6 +75,7 @@ let playerClock = new THREE.Clock();
 const gltfLoader = new THREE.GLTFLoader();
 const occlusionRaycaster = new THREE.Raycaster();
 const occludedOccluderMeshes = new Set();
+const explosions = [];
 
 function cloneObjectMaterials(root) {
     if (!root) return;
@@ -140,6 +141,65 @@ function updatePlayerOcclusionVisibility() {
         hideOccluderMesh(obj);
         occludedOccluderMeshes.add(obj);
     });
+}
+
+function createExplosion(pos) {
+    const particleCount = 30;
+    const geometry = new THREE.BufferGeometry();
+    const positions = [];
+    const velocities = [];
+
+    for (let i = 0; i < particleCount; i++) {
+        positions.push(pos.x, pos.y, pos.z);
+        velocities.push(
+            (Math.random() - 0.5) * 0.5,
+            (Math.random() - 0.5) * 0.5 + 0.3,
+            (Math.random() - 0.5) * 0.5
+        );
+    }
+
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    
+    const material = new THREE.PointsMaterial({
+        color: 0xffaa00,
+        size: 0.3,
+        transparent: true,
+        opacity: 1.0,
+        blending: THREE.AdditiveBlending
+    });
+
+    const pSystem = new THREE.Points(geometry, material);
+    gameGroup.add(pSystem);
+
+    explosions.push({
+        system: pSystem,
+        velocities: velocities,
+        life: 1.0
+    });
+}
+
+function updateExplosions(deltaTime) {
+    for (let i = explosions.length - 1; i >= 0; i--) {
+        const exp = explosions[i];
+        exp.life -= deltaTime;
+
+        if (exp.life <= 0) {
+            gameGroup.remove(exp.system);
+            exp.system.geometry.dispose();
+            exp.system.material.dispose();
+            explosions.splice(i, 1);
+            continue;
+        }
+
+        const posAttr = exp.system.geometry.attributes.position;
+        for (let j = 0; j < posAttr.count; j++) {
+            posAttr.setX(j, posAttr.getX(j) + exp.velocities[j * 3]);
+            posAttr.setY(j, posAttr.getY(j) + exp.velocities[j * 3 + 1]);
+            posAttr.setZ(j, posAttr.getZ(j) + exp.velocities[j * 3 + 2]);
+        }
+        posAttr.needsUpdate = true;
+        exp.system.material.opacity = exp.life;
+    }
 }
 
 function createGroundTexture(type) {
@@ -816,21 +876,25 @@ function executeAttack() {
     if (mapData[targetX] && (mapData[targetX][targetZ] === 1 || mapData[targetX][targetZ] === 2)) {
         if (targetX > 0 && targetX < MAP_SIZE - 1 && targetZ > 0 && targetZ < MAP_SIZE - 1) {
             if (mapMeshes[targetX][targetZ]) {
-                // Sword の中間タイミングで赤発光、終了時に消す（敵と同じロジック）
+                // Sword の中間タイミングで赤発光
                 setTimeout(() => {
                     if (mapMeshes[targetX][targetZ]) {
                         flashModelDamageRed(mapMeshes[targetX][targetZ], 260);
                     }
                 }, halfSword);
                 
+                // 赤発光終了後にメッシュを削除してから爆発エフェクト開始
                 setTimeout(() => {
                     if (mapMeshes[targetX][targetZ]) {
+                        const pos = new THREE.Vector3();
+                        mapMeshes[targetX][targetZ].getWorldPosition(pos);
                         gameGroup.remove(mapMeshes[targetX][targetZ]);
                         mapMeshes[targetX][targetZ] = null;
+                        mapData[targetX][targetZ] = 0;
+                        createExplosion(pos);
+                        moveEnemies();
                     }
-                    mapData[targetX][targetZ] = 0;
-                    moveEnemies();
-                }, swordDuration);
+                }, halfSword + 260);
             }
         }
     }
@@ -914,14 +978,18 @@ function handleTileEvents() {
         applyDamage(2);
         reactToDamage();
         
-        // トラップを赤発光させて消す
+        // トラップを赤発光させてから爆発エフェクトで消す
         if (mapMeshes[trapX][trapZ]) {
             flashModelDamageRed(mapMeshes[trapX][trapZ], 260);
+            // 赤発光終了後にメッシュを削除してから爆発エフェクト開始
             setTimeout(() => {
                 if (mapMeshes[trapX][trapZ]) {
+                    const pos = new THREE.Vector3();
+                    mapMeshes[trapX][trapZ].getWorldPosition(pos);
                     gameGroup.remove(mapMeshes[trapX][trapZ]);
                     mapMeshes[trapX][trapZ] = null;
                     mapData[trapX][trapZ] = 0;
+                    createExplosion(pos);
                 }
             }, 260);
         }
@@ -1192,6 +1260,7 @@ function animate() {
     }
 
     updatePlayerOcclusionVisibility();
+    updateExplosions(delta);
 
     renderer.render(scene, camera);
 }
