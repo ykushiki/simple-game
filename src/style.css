@@ -14,8 +14,8 @@ body {
     -webkit-user-select: none;
 }
 
-/* ★ 左上端に固定するステータスUI */
-#status-container {
+/* HPは常時表示 */
+#hp-only {
     position: fixed;
     top: 10px;
     left: 10px;
@@ -26,9 +26,21 @@ body {
     color: white;
     font-size: 14px;
     backdrop-filter: blur(4px);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    min-width: 160px;
+}
+
+/* ★ 左上端に固定するステータスUI */
+#status-container {
+    position: fixed;
+    top: 74px;
+    left: 10px;
+    z-index: 10;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 8px 12px;
+    border-radius: 6px;
+    color: white;
+    font-size: 14px;
+    backdrop-filter: blur(4px);
     min-width: 160px;
 }
 
@@ -183,4 +195,10 @@ body {
 .action-btn:active {
     background: rgba(255, 255, 255, 0.7) !important;
     color: black;
+}
+
+.hidden-overlay {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
 }

@@ -4,6 +4,7 @@ let MAP_SIZE = 15;
 let player = { 
     x: 1, z: 1, 
     targetX: 1, targetZ: 1, 
+    prevX: 1, prevZ: 1,
     visualY: 0,
     dirX: 0, dirZ: 1, 
     angle: 0,         
@@ -19,6 +20,7 @@ let mapData = [];
 let mapMeshes = []; 
 let itemMeshes = []; 
 let enemies = []; 
+let hasMovedOnce = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x4ca6ff); 
@@ -63,6 +65,43 @@ const MOVE_SPEED = 0.15;
 let joystickInput = { active: false, move: 0, turn: 0 };
 let joystickRepeatTimer = null;
 
+// 3D モデル関連
+let playerMixer = null;
+let playerAnimations = {};
+let playerClock = new THREE.Clock();
+const gltfLoader = new THREE.GLTFLoader();
+function prepareLoadedModel(model, { scale = 1, y = 0, rotationY = -Math.PI / 2 } = {}) {
+    model.scale.set(scale, scale, scale);
+    model.position.set(0, y, 0);
+    model.rotation.set(0, rotationY, 0);
+    model.traverse((child) => {
+        if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+        }
+    });
+    return model;
+}
+
+function normalizeAndCenterModel(model) {
+    const box = new THREE.Box3().setFromObject(model);
+    if (!box.isEmpty()) {
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.x -= center.x;
+        model.position.z -= center.z;
+        model.position.y -= box.min.y;
+    }
+}
+
+function playPlayerAnim(name, fadeTime = 0.15) {
+    if (!playerMixer || !playerAnimations) return;
+    const action = playerAnimations[name];
+    if (action) {
+        Object.values(playerAnimations).forEach(a => { if (a !== action) a.fadeOut(fadeTime); });
+        action.reset().fadeIn(fadeTime).play();
+    }
+}
+
 function initStage() {
     while(gameGroup.children.length > 0){
         gameGroup.remove(gameGroup.children[0]);
@@ -74,9 +113,11 @@ function initStage() {
 
     document.getElementById('stage-display').innerText = `STAGE: ${stage}`;
     updateUI();
+    updateOverlayVisibility();
 
     player.x = 1; player.z = 1;
     player.targetX = 1; player.targetZ = 1;
+    player.prevX = 1; player.prevZ = 1;
     player.dirX = 0; player.dirZ = 1;
     player.angle = 0; player.targetAngle = 0;
     player.isMoving = false; player.isJumping = false;
@@ -106,7 +147,7 @@ function initStage() {
             rz = Math.floor(Math.random() * (MAP_SIZE - 2)) + 1;
         } while (mapData[rx][rz] !== 0 || (rx === 1 && rz === 1) || (rx === goal.x && rz === goal.z));
         
-        enemies.push({ x: rx, z: rz, targetX: rx, targetZ: rz, mesh: null });
+        enemies.push({ x: rx, z: rz, targetX: rx, targetZ: rz, mesh: null, angle: 0, targetAngle: 0, mixer: null, animations: {}, isMoving: false });
     }
 
     const tileGeo = new THREE.BoxGeometry(0.95, 0.2, 0.95);
@@ -114,9 +155,9 @@ function initStage() {
     const trapGeo = new THREE.ConeGeometry(0.25, 0.5, 4);
     const itemGeo = new THREE.SphereGeometry(0.2, 8, 8);
 
-    const tileMat = new THREE.MeshLambertMaterial({ color: 0x55b85d, flatShading: true }); 
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0xdfcda3, flatShading: true }); 
-    const trapMat = new THREE.MeshLambertMaterial({ color: 0xcc4444, flatShading: true }); 
+    const tileMat = new THREE.MeshPhongMaterial({ color: 0x55b85d, flatShading: true });
+    const wallMat = new THREE.MeshPhongMaterial({ color: 0xdfcda3, flatShading: true });
+    const trapMat = new THREE.MeshPhongMaterial({ color: 0xcc4444, flatShading: true });
     const itemMat = new THREE.MeshStandardMaterial({ color: 0x33ffcc, roughness: 0.1 });
 
     for (let x = 0; x < MAP_SIZE; x++) {
@@ -147,7 +188,7 @@ function initStage() {
         }
     }
 
-    const beachMat = new THREE.MeshLambertMaterial({ color: 0xeedd99, flatShading: true }); 
+    const beachMat = new THREE.MeshPhongMaterial({ color: 0xeedd99, flatShading: true }); 
     const beachThickness = 3; 
     for (let x = -beachThickness; x < MAP_SIZE + beachThickness; x++) {
         for (let z = -beachThickness; z < MAP_SIZE + beachThickness; z++) {
@@ -176,7 +217,7 @@ function initStage() {
 
     playerGroup = new THREE.Group();
     const bodyGeo = new THREE.BoxGeometry(0.5, 0.8, 0.5);
-    const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2277ff, flatShading: true });
+    const bodyMat = new THREE.MeshPhongMaterial({ color: 0x2277ff, flatShading: true });
     const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
     bodyMesh.position.y = 0.4;
     bodyMesh.castShadow = true;
@@ -198,13 +239,80 @@ function initStage() {
     gameGroup.add(goalMesh);
 
     const enemyGeo = new THREE.ConeGeometry(0.3, 0.6, 4);
-    const enemyMat = new THREE.MeshLambertMaterial({ color: 0xdd2222, flatShading: true });
+    const enemyMat = new THREE.MeshPhongMaterial({ color: 0xdd2222, flatShading: true });
     enemies.forEach(enemy => {
         enemy.mesh = new THREE.Mesh(enemyGeo, enemyMat);
         enemy.mesh.position.set(enemy.x, 0.3, enemy.z);
         enemy.mesh.castShadow = true;
         gameGroup.add(enemy.mesh);
     });
+
+    // プレイヤーモデルの読み込み
+    const playerModelUrl = '../models/Characters_Anne.gltf';
+    if (gltfLoader) {
+        gltfLoader.load(playerModelUrl, (gltf) => {
+            const playerModel = prepareLoadedModel(gltf.scene, { scale: 0.6, y: 0.0, rotationY: 0 });
+            normalizeAndCenterModel(playerModel);
+            
+            // プリミティブメッシュを削除してモデルに置き換え
+            while (playerGroup.children.length > 0) {
+                playerGroup.remove(playerGroup.children[0]);
+            }
+            
+            playerGroup.add(playerModel);
+
+            if (gltf.animations && gltf.animations.length > 0) {
+                playerMixer = new THREE.AnimationMixer(playerModel);
+                playerAnimations = {};
+                gltf.animations.forEach((clip) => {
+                    playerAnimations[clip.name] = playerMixer.clipAction(clip);
+                });
+                playPlayerAnim('Idle');
+            }
+        }, undefined, (error) => {
+            console.error('プレイヤーモデル読み込み失敗:', error);
+        });
+    }
+
+    const enemyModelUrl = '../models/Characters_Skeleton.gltf';
+    if (gltfLoader) {
+        gltfLoader.load(enemyModelUrl, (gltf) => {
+            // 1. ここでベースモデルを作成（normalizeAndCenterModelは絶対に適用しない！）
+            const baseEnemyModel = prepareLoadedModel(gltf.scene, { scale: 0.7, y: 0, rotationY: Math.PI / 2 });
+
+            enemies.forEach(enemy => {
+                // THREE.SkeletonUtils.clone() でスキンメッシュ（骨格付きキャラ）を正しく複製する
+                let enemyModel;
+                if (typeof THREE !== 'undefined' && THREE.SkeletonUtils && THREE.SkeletonUtils.clone) {
+                    enemyModel = THREE.SkeletonUtils.clone(baseEnemyModel);
+                } else {
+                    console.warn('THREE.SkeletonUtils が利用できません。通常の clone() を使用します。');
+                    enemyModel = baseEnemyModel.clone();
+                }
+
+                // 2. クローンした個々の敵に対して位置と回転を設定
+                enemyModel.position.set(enemy.x, 0.3, enemy.z);
+                enemyModel.rotation.set(0, Math.PI / 2, 0);
+                enemy.mesh = enemyModel;
+                gameGroup.add(enemy.mesh);
+
+                // アニメーションの設定
+                if (gltf.animations && gltf.animations.length > 0) {
+                    enemy.mixer = new THREE.AnimationMixer(enemyModel);
+                    enemy.animations = {};
+                    gltf.animations.forEach((clip) => {
+                        enemy.animations[clip.name] = enemy.mixer.clipAction(clip);
+                    });
+                    // 敵を Idle で初期化
+                    if (enemy.animations['Idle']) {
+                        enemy.animations['Idle'].play();
+                    }
+                }
+            });
+        }, undefined, (error) => {
+            console.error('敵モデルの読み込みに失敗しました:', error);
+        });
+    }
 
     updateCameraImmediate();
 }
@@ -213,6 +321,137 @@ function updateUI() {
     document.getElementById('hp-text').innerText = `${player.hp} / ${player.maxHp}`;
     const hpPercent = (player.hp / player.maxHp) * 100;
     document.getElementById('hp-bar').style.width = `${Math.max(0, hpPercent)}%`;
+}
+
+function updateOverlayVisibility() {
+    const hide = hasMovedOnce || player.isMoving;
+    const status = document.getElementById('status-ui') || document.getElementById('status-container');
+    const guide = document.getElementById('guide-ui') || document.getElementById('ui');
+    const commit = document.getElementById('commit-info');
+    if (status) status.classList.toggle('hidden-overlay', hide);
+    if (guide) guide.classList.toggle('hidden-overlay', hide);
+    if (commit) commit.classList.toggle('hidden-overlay', hide);
+}
+
+function applyDamage(amount) {
+    if (amount <= 0) return;
+    player.hp = Math.max(0, player.hp - amount);
+    updateUI();
+}
+
+function flashModelDamageRed(root, durationMs = 220) {
+    if (!root) return;
+
+    const touchedMaterials = new Set();
+
+    root.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+        materials.forEach((mat) => {
+            if (!mat || !mat.emissive || touchedMaterials.has(mat)) return;
+            touchedMaterials.add(mat);
+
+            const originalEmissive = mat.emissive.clone();
+            const originalIntensity = typeof mat.emissiveIntensity === 'number' ? mat.emissiveIntensity : null;
+
+            mat.emissive.setHex(0xff2222);
+            if (typeof mat.emissiveIntensity === 'number') {
+                mat.emissiveIntensity = Math.max(1.2, mat.emissiveIntensity);
+            }
+
+            setTimeout(() => {
+                mat.emissive.copy(originalEmissive);
+                if (originalIntensity !== null) mat.emissiveIntensity = originalIntensity;
+            }, durationMs);
+        });
+    });
+}
+
+function flashPlayerDamageRed(durationMs = 220) {
+    flashModelDamageRed(playerGroup, durationMs);
+}
+
+function flashEnemyDamageRed(enemy, durationMs = 260) {
+    if (!enemy || !enemy.mesh) return;
+    flashModelDamageRed(enemy.mesh, durationMs);
+}
+
+function reactToDamage() {
+    flashPlayerDamageRed();
+
+    const hitReactAction = playerMixer && playerAnimations ? playerAnimations['HitReact'] : null;
+    if (hitReactAction) {
+        playPlayerAnim('HitReact');
+        const hitDuration = hitReactAction.getClip().duration * 1000;
+        setTimeout(() => {
+            if (!player.isMoving) playPlayerAnim('Idle');
+        }, hitDuration);
+    }
+
+    const canKnockback = mapData[player.prevX]
+        && mapData[player.prevX][player.prevZ] !== 1
+        && (player.prevX !== player.x || player.prevZ !== player.z);
+
+    if (canKnockback) {
+        player.targetX = player.prevX;
+        player.targetZ = player.prevZ;
+        player.isMoving = true;
+        player.isJumping = false;
+        player.jumpTimer = 0;
+    }
+}
+
+function playEnemyAnim(enemy, name, fadeTime = 0.15) {
+    if (!enemy || !enemy.animations) return null;
+    const action = enemy.animations[name];
+    if (!action) return null;
+    Object.values(enemy.animations).forEach((a) => { if (a !== action) a.fadeOut(fadeTime); });
+    action.reset().fadeIn(fadeTime).play();
+    return action;
+}
+
+function resolveHeadOnClash() {
+    const playerFromX = player.x;
+    const playerFromZ = player.z;
+    const playerToX = player.targetX;
+    const playerToZ = player.targetZ;
+
+    const clashEnemy = enemies.find((enemy) => {
+        return enemy.targetX === playerFromX
+            && enemy.targetZ === playerFromZ
+            && enemy.x === playerToX
+            && enemy.z === playerToZ;
+    });
+
+    if (!clashEnemy) return false;
+
+    // 今フレームの移動をキャンセル
+    player.targetX = player.x;
+    player.targetZ = player.z;
+    player.isMoving = false;
+    player.isJumping = false;
+    player.jumpTimer = 0;
+    if (playerGroup) playerGroup.position.set(player.x, 0, player.z);
+
+    enemies.forEach((enemy) => {
+        enemy.targetX = enemy.x;
+        enemy.targetZ = enemy.z;
+        enemy.isMoving = false;
+    });
+
+    // 敵は消さずに Sword、プレイヤーは被ダメリアクション
+    const swordAction = playEnemyAnim(clashEnemy, 'Sword');
+    if (swordAction) {
+        const swordDuration = swordAction.getClip().duration * 1000;
+        setTimeout(() => {
+            if (clashEnemy.mesh) playEnemyAnim(clashEnemy, 'Idle');
+        }, swordDuration);
+    }
+
+    applyDamage(3);
+    reactToDamage();
+    return true;
 }
 
 function updateCommitInfo() {
@@ -278,8 +517,15 @@ function executeGridMove(moveStep) {
     const nextX = player.x + player.dirX * moveStep;
     const nextZ = player.z + player.dirZ * moveStep;
     if (mapData[nextX] && mapData[nextX][nextZ] !== 1) {
+        player.prevX = player.x;
+        player.prevZ = player.z;
         player.targetX = nextX; player.targetZ = nextZ;
-        player.isMoving = true; moveEnemies();
+        player.isMoving = true;
+        playPlayerAnim('Run');
+        hasMovedOnce = true;
+        updateOverlayVisibility();
+        moveEnemies();
+        if (resolveHeadOnClash()) return;
     }
 }
 
@@ -287,17 +533,46 @@ function executeAttack() {
     const targetX = player.x + player.dirX;
     const targetZ = player.z + player.dirZ;
 
+    // Sword アニメーションを再生し、終了後 Idle に戻す
+    playPlayerAnim('Sword');
+    const swordAction = playerMixer && playerAnimations['Sword'] ? playerAnimations['Sword'] : null;
+    const swordDuration = swordAction ? swordAction.getClip().duration * 1000 : 500;
+    const halfSword = swordDuration / 2;
+    setTimeout(() => playPlayerAnim('Idle'), swordDuration);
+
     const hitEnemy = enemies.find(e => e.x === targetX && e.z === targetZ);
     if (hitEnemy) {
-        gameGroup.remove(hitEnemy.mesh);
+        // 先にロジックから除外（重複ヒット防止）
         enemies = enemies.filter(e => e !== hitEnemy);
-        moveEnemies(); return;
+        moveEnemies();
+
+        // Sword の中間タイミングで敵の Dead アニメーションを開始する
+        setTimeout(() => {
+            flashEnemyDamageRed(hitEnemy);
+
+            const deadAction = (hitEnemy.animations && (hitEnemy.animations['Death'] || hitEnemy.animations['death'])) || null;
+            if (hitEnemy.mixer && deadAction) {
+                deadAction.loop = THREE.LoopOnce;
+                deadAction.clampWhenFinished = true;
+                Object.values(hitEnemy.animations).forEach(a => { if (a !== deadAction) a.fadeOut(0.15); });
+                deadAction.reset().fadeIn(0.15).play();
+
+                // Dead 終了後にメッシュを削除する
+                const deadDuration = deadAction.getClip().duration * 1000;
+                setTimeout(() => gameGroup.remove(hitEnemy.mesh), deadDuration);
+            } else {
+                // Dead アニメーションがない場合はすぐ消す
+                gameGroup.remove(hitEnemy.mesh);
+            }
+        }, halfSword);
+        return;
     }
 
-    if (mapData[targetX] && mapData[targetX][targetZ] === 1) {
+    if (mapData[targetX] && (mapData[targetX][targetZ] === 1 || mapData[targetX][targetZ] === 2)) {
         if (targetX > 0 && targetX < MAP_SIZE - 1 && targetZ > 0 && targetZ < MAP_SIZE - 1) {
-            gameGroup.remove(mapMeshes[targetX][targetZ]);
-            mapData[targetX][targetZ] = 0; 
+            if (mapMeshes[targetX][targetZ]) gameGroup.remove(mapMeshes[targetX][targetZ]);
+            mapData[targetX][targetZ] = 0;
+            mapMeshes[targetX][targetZ] = null;
             moveEnemies();
         }
     }
@@ -307,9 +582,15 @@ function executeJump() {
     const landX = player.x + player.dirX * 2;
     const landZ = player.z + player.dirZ * 2;
     if (mapData[landX] && mapData[landX][landZ] !== 1) {
+        player.prevX = player.x;
+        player.prevZ = player.z;
         player.targetX = landX; player.targetZ = landZ;
         player.isMoving = true; player.isJumping = true; player.jumpTimer = 0;
+        playPlayerAnim('Run');
+        hasMovedOnce = true;
+        updateOverlayVisibility();
         moveEnemies();
+        if (resolveHeadOnClash()) return;
     }
 }
 
@@ -323,11 +604,25 @@ function moveEnemies() {
         }
         if (mapData[nextX][nextZ] !== 1 && !isEnemyAt(nextX, nextZ) && !(nextX === goal.x && nextZ === goal.z)) {
             enemy.targetX = nextX; enemy.targetZ = nextZ;
+            enemy.isMoving = true;
+            // 移動方向を向くよう目標角度を計算する
+            const dx = nextX - enemy.x;
+            const dz = nextZ - enemy.z;
+            if (dx !== 0 || dz !== 0) {
+                enemy.targetAngle = Math.atan2(dx, dz);
+            }
+            // Run アニメーション開始
+            if (enemy.mixer && enemy.animations && enemy.animations['Run']) {
+                playEnemyAnim(enemy, 'Run');
+            }
         }
     });
 }
 
-function isEnemyAt(x, z) { return enemies.some(e => e.x === x && e.z === z); }
+function isEnemyAt(x, z) { 
+    // 現在位置と目標位置の両方をチェック（重複防止）
+    return enemies.some(e => (e.x === x && e.z === z) || (e.targetX === x && e.targetZ === z)); 
+}
 
 function updateCameraImmediate() {
     const px = player.x; const pz = player.z;
@@ -341,12 +636,14 @@ function handleTileEvents() {
         gameGroup.remove(itemMeshes[player.x][player.z]); mapData[player.x][player.z] = 0;
     }
     if (mapData[player.x][player.z] === 2) {
-        player.hp -= 2; updateUI();
+        applyDamage(2);
+        reactToDamage();
         if (player.hp <= 0) { alert("罠にかかって倒れてしまった…"); stage = 1; player.hp = player.maxHp; initStage(); return; }
     }
     enemies.forEach(enemy => {
         if (enemy.x === player.x && enemy.z === player.z) {
-            player.hp -= 3; updateUI();
+            applyDamage(3);
+            reactToDamage();
             gameGroup.remove(enemy.mesh); enemies = enemies.filter(e => e !== enemy);
             if (player.hp <= 0) { alert("敵に敗北してしまった…"); stage = 1; player.hp = player.maxHp; initStage(); }
         }
@@ -498,8 +795,12 @@ function setupTouchControls() {
     });
 }
 
-// ページの読み込み完了を待ってから初期化・タッチ登録を行う
-window.addEventListener('DOMContentLoaded', () => {
+// ゲーム初期化（スクリプトは index.html の末尾で順序通りに読み込まれる）
+(() => {
+    if (!THREE.SkeletonUtils || !THREE.SkeletonUtils.clone) {
+        console.warn('THREE.SkeletonUtils が見つかりません。通常の clone() を使用します。');
+    }
+
     initStage();
     window.__GIT_INFO__ = {
         commit: 'c5c08ab-fix vkey',
@@ -508,11 +809,15 @@ window.addEventListener('DOMContentLoaded', () => {
     updateCommitInfo();
     setupTouchControls();
     animate();
-});
+})();
 
 // アニメーションループ
 function animate() {
     requestAnimationFrame(animate);
+    updateOverlayVisibility();
+
+    const delta = playerClock.getDelta();
+    if (playerMixer) playerMixer.update(delta);
 
     if (playerGroup) {
         player.angle += (player.targetAngle - player.angle) * 0.2;
@@ -534,20 +839,36 @@ function animate() {
             player.x = player.targetX; player.z = player.targetZ;
             playerGroup.position.set(player.x, 0, player.z);
             player.isMoving = false; player.isJumping = false;
+            playPlayerAnim('Idle');
             
             enemies.forEach(enemy => {
                 enemy.x = enemy.targetX; enemy.z = enemy.targetZ;
                 if (enemy.mesh) enemy.mesh.position.set(enemy.x, 0.3, enemy.z);
+                // 移動完了時に Idle に戻す
+                if (enemy.isMoving) {
+                    enemy.isMoving = false;
+                    if (enemy.mixer && enemy.animations && enemy.animations['Idle']) {
+                        const idleAction = enemy.animations['Idle'];
+                        Object.values(enemy.animations).forEach(a => { if (a !== idleAction) a.fadeOut(0.15); });
+                        idleAction.reset().fadeIn(0.15).play();
+                    }
+                }
             });
             handleTileEvents();
         }
     }
 
     enemies.forEach(enemy => {
+        // 敵ごとの AnimationMixer を更新
+        if (enemy.mixer) enemy.mixer.update(delta);
+
         if (enemy.mesh && player.isMoving) {
             enemy.mesh.position.x += (enemy.targetX - enemy.mesh.position.x) * MOVE_SPEED;
             enemy.mesh.position.z += (enemy.targetZ - enemy.mesh.position.z) * MOVE_SPEED;
             enemy.mesh.position.y = 0.3 + Math.abs(Math.sin(playerGroup.position.x * 4)) * 0.1;
+            // 移動方向へ滑らかに回転（lerp）
+            enemy.angle += (enemy.targetAngle - enemy.angle) * 0.15;
+            enemy.mesh.rotation.y = enemy.angle;
         }
     });
 
