@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Launcher</title>
+    <style>
+        :root {
+            --bg0: #0b1020;
+            --bg1: #12233f;
+            --card: rgba(10, 18, 34, 0.72);
+            --line: rgba(130, 180, 255, 0.35);
+            --text: #e8f2ff;
+            --accentA: #69d2ff;
+            --accentB: #ffc66d;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            color: var(--text);
+            font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+            background:
+                radial-gradient(1200px 500px at 20% 0%, #1f3e70 0%, transparent 70%),
+                radial-gradient(800px 400px at 90% 100%, #4b2e1a 0%, transparent 65%),
+                linear-gradient(140deg, var(--bg0), var(--bg1));
+        }
+
+        .wrap {
+            width: min(860px, 92vw);
+            padding: 24px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: var(--card);
+            backdrop-filter: blur(6px);
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: clamp(24px, 3.4vw, 34px);
+            letter-spacing: 0.03em;
+        }
+
+        p {
+            margin: 0 0 20px;
+            color: #bbcff0;
+        }
+
+        .grid {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        }
+
+        .card {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 16px;
+            background: rgba(17, 29, 53, 0.55);
+            transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(210, 230, 255, 0.7);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+        }
+
+        .title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .meta {
+            font-size: 13px;
+            color: #c0d5f4;
+            margin-bottom: 10px;
+        }
+
+        .tag {
+            display: inline-block;
+            font-size: 12px;
+            border-radius: 999px;
+            padding: 4px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .tag.action { color: var(--accentA); }
+        .tag.shoot { color: var(--accentB); }
+    </style>
+</head>
+<body>
+    <main class="wrap">
+        <h1>Game Launcher</h1>
+        <p>起動したいゲームを選択してください。</p>
+
+        <div class="grid">
+            <a class="card" href="./3d_action/">
+                <div class="title">3D Action</div>
+                <div class="meta">島RPGプロトタイプ</div>
+                <span class="tag action">3D Action</span>
+            </a>
+
+            <a class="card" href="./shooting/">
+                <div class="title">Shooting</div>
+                <div class="meta">TUBE RUNNER</div>
+                <span class="tag shoot">3D Shooting</span>
+            </a>
+        </div>
+    </main>
+</body>
+</html>
