@@ -1,9 +1,4 @@
-/**
- * 3D Grid-Based Action Game (Refactored)
- * Dependencies: Three.js, Three.GLTFLoader, Three.SkeletonUtils, nipplejs
- */
-
-// --- ゲーム全体の共通設定 ---
+﻿// --- ゲーム全体の設定 ---
 const CONFIG = {
     INITIAL_MAP_SIZE: 15,
     MAP_SIZE_INCREMENT: 2,
@@ -12,13 +7,14 @@ const CONFIG = {
     PLAYER_DAMAGE: 3,
     TRAP_DAMAGE: 2,
     SCORE_ENEMY: 50,
+    SCORE_COIN: 100,
     HEAL_AMOUNT: 5,
     CAMERA_LERP_FACTOR: 0.06,
     JOYSTICK_REPEAT_INTERVAL: 220,
     DAMAGE_FLASH_DURATION: 260
 };
 
-// --- アセット読み込み・共通ユーティリティ ---
+// --- アセット読み込みと共通ユーティリティ ---
 const Utils = {
     cloneObjectMaterials(root) {
         if (!root) return;
@@ -91,7 +87,7 @@ const Utils = {
     }
 };
 
-// --- キャラクターの基底クラス ---
+// --- キャラクター共通の基底クラス ---
 class CharacterBase {
     constructor(x, z) {
         this.x = x;
@@ -127,7 +123,7 @@ class CharacterBase {
     }
 }
 
-// --- プレイヤーキャラクタークラス ---
+// --- プレイヤークラス ---
 class Player extends CharacterBase {
     constructor(x, z) {
         super(x, z);
@@ -136,6 +132,7 @@ class Player extends CharacterBase {
         this.dirX = 0;
         this.dirZ = 1;
         this.isJumping = false;
+        this.isAttacking = false; // 攻撃中は入力をロック
         this.jumpTimer = 0;
         this.visualY = 0;
     }
@@ -153,6 +150,7 @@ class Player extends CharacterBase {
         this.targetAngle = 0;
         this.isMoving = false;
         this.isJumping = false;
+        this.isAttacking = false;
         this.jumpTimer = 0;
         this.visualY = 0;
         if (this.mesh) {
@@ -176,7 +174,7 @@ class Player extends CharacterBase {
             this.playAnimation('HitReact');
             const duration = hitReactAction.getClip().duration * 1000;
             setTimeout(() => {
-                if (!this.isMoving && this.hp > 0) this.playAnimation('Idle');
+                if (!this.isMoving && this.hp > 0 && !this.isAttacking) this.playAnimation('Idle');
             }, duration);
         }
     }
@@ -186,19 +184,23 @@ class Player extends CharacterBase {
     }
 }
 
-// --- 敵キャラクタークラス ---
+// --- 敵クラス ---
 class Enemy extends CharacterBase {
-    constructor(x, z) {
+    constructor(x, z, type = 'normal') {
         super(x, z);
+        this.type = type; // 'normal' または 'elite'
         this.isDying = false;
         this.isFlashing = false;
         this.shouldActOnce = false;
         this.skipCounterOnce = false;
         this.hasCountered = false;
         this.movedOnTurn = 0;
+        
+        // エリート敵は与ダメージが高い
+        this.damage = (type === 'elite') ? CONFIG.PLAYER_DAMAGE * 1.5 : CONFIG.PLAYER_DAMAGE;
     }
 
-    resetState(x, z) {
+    resetState(x, z, type = 'normal') {
         this.x = x;
         this.z = z;
         this.targetX = x;
@@ -212,13 +214,38 @@ class Enemy extends CharacterBase {
         this.skipCounterOnce = false;
         this.hasCountered = false;
         this.movedOnTurn = 0;
+        this.type = type;
+        this.damage = (type === 'elite') ? CONFIG.PLAYER_DAMAGE * 1.5 : CONFIG.PLAYER_DAMAGE;
 
         if (this.mesh) {
             this.mesh.visible = true;
             this.mesh.position.set(x, 0, z);
             this.mesh.rotation.y = 0;
+            
+           
+            this.applyTypeAppearance();
         }
         this.playAnimation('Idle');
+    }
+
+    applyTypeAppearance() {
+        if (!this.mesh) return;
+        this.mesh.traverse((child) => {
+            if (child.isMesh && child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                materials.forEach((mat) => {
+                    if (this.type === 'elite') {
+                       
+                        if (mat.color) mat.color.setHex(0x111111);
+                        if (mat.emissive) mat.emissive.setHex(0x664400);
+                    } else {
+                        // 通常敵はデフォルト色
+                        if (mat.color) mat.color.setHex(0xffffff);
+                        if (mat.emissive) mat.emissive.setHex(0x000000);
+                    }
+                });
+            }
+        });
     }
 
     flashDamage() {
@@ -240,7 +267,7 @@ class Enemy extends CharacterBase {
     }
 }
 
-// --- マップ・ギミック・エフェクト管理者クラス ---
+// --- マップ生成・アイテム・VFX補助 ---
 class MapManager {
     constructor(game) {
         this.game = game;
@@ -250,6 +277,7 @@ class MapManager {
         this.flashingTrapTiles = new Set();
         this.explosions = [];
         this.goalMesh = null;
+        this.slashEffects = []; // 有効中の斬撃VFX一覧
     }
 
     clear() {
@@ -263,6 +291,12 @@ class MapManager {
             exp.system.material.dispose();
         });
         this.explosions = [];
+        this.slashEffects.forEach((slash) => {
+            this.game.gameGroup.remove(slash.mesh);
+            slash.mesh.geometry.dispose();
+            slash.mesh.material.dispose();
+        });
+        this.slashEffects = [];
     }
 
     createGroundTexture(type) {
@@ -376,6 +410,71 @@ class MapManager {
         return appleGroup;
     }
 
+    createCoinItem() {
+        const coinGroup = new THREE.Group();
+        const cylinderGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.03, 16);
+        const coinMat = new THREE.MeshStandardMaterial({
+            color: 0xffdd00,
+            metalness: 0.8,
+            roughness: 0.1
+        });
+        const coinMesh = new THREE.Mesh(cylinderGeo, coinMat);
+        coinMesh.rotation.x = Math.PI / 2; // コインを立てる
+        coinGroup.add(coinMesh);
+        return coinGroup;
+    }
+
+    // プレイヤー左手側に斬撃VFXを生成
+    createSlashEffect(playerX, playerZ, dirX, dirZ) {
+        // 前方 + 左方向オフセットで左利きの軌跡に見せる
+        const leftX = -dirZ;
+        const leftZ = dirX;
+        const effectPos = new THREE.Vector3(
+            playerX + dirX * 0.55 + leftX * 0.26,
+            0.5,
+            playerZ + dirZ * 0.55 + leftZ * 0.26
+        );
+        
+       
+        const slashGeo = new THREE.RingGeometry(0.1, 0.45, 16, 1, 0, Math.PI);
+        const slashMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.95
+        });
+
+        const mesh = new THREE.Mesh(slashGeo, slashMat);
+        mesh.position.copy(effectPos);
+
+        // プレイヤー進行方向へ向ける
+        const angle = Math.atan2(dirX, dirZ);
+        mesh.rotation.set(Math.PI / 2, 0, angle + Math.PI / 2);
+
+        this.game.gameGroup.add(mesh);
+        this.slashEffects.push({
+            mesh: mesh,
+            life: 0.18 // 短寿命で素早い斬撃感を出す
+        });
+    }
+
+    updateSlashEffects(deltaTime) {
+        for (let i = this.slashEffects.length - 1; i >= 0; i--) {
+            const effect = this.slashEffects[i];
+            effect.life -= deltaTime;
+            if (effect.life <= 0) {
+                this.game.gameGroup.remove(effect.mesh);
+                effect.mesh.geometry.dispose();
+                effect.mesh.material.dispose();
+                this.slashEffects.splice(i, 1);
+            } else {
+               
+                effect.mesh.scale.multiplyScalar(1.08);
+                effect.mesh.material.opacity = (effect.life / 0.18);
+            }
+        }
+    }
+
     createExplosion(pos) {
         const particleCount = 30;
         const geometry = new THREE.BufferGeometry();
@@ -459,7 +558,7 @@ class MapManager {
     }
 }
 
-// --- メインゲームクラス ---
+// --- ゲーム全体の制御クラス ---
 class Game {
     constructor() {
         this.stage = 1;
@@ -473,7 +572,7 @@ class Game {
         this.enemies = [];
         this.player = null;
 
-        // Three.js 環境初期化
+        // Three.js のシーンと描画コンテキストを初期化
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x4ca6ff);
         this.scene.fog = new THREE.FogExp2(0xa7d8f0, 0.010);
@@ -499,7 +598,7 @@ class Game {
     }
 
     initEngine() {
-        // レンダラー設定
+    // レンダラー設定
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 0.88;
@@ -516,7 +615,7 @@ class Game {
         dom.style.zIndex = '0';
         document.body.appendChild(dom);
 
-        // ライト設定
+        // 基本ライト設定
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         this.scene.add(ambientLight);
 
@@ -534,7 +633,7 @@ class Game {
         dirLight.shadow.camera.bottom = -d;
         this.scene.add(dirLight);
 
-        // プレイヤー初期化
+        // スポーン地点でプレイヤー状態を作成
         this.player = new Player(1, 1);
 
         window.addEventListener('resize', () => this.onWindowResize());
@@ -549,7 +648,7 @@ class Game {
     }
 
     initStage() {
-        // フィールド上のアセットを全てクリア
+        // 前ステージのオブジェクトとキャッシュを消去
         while (this.gameGroup.children.length > 0) {
             this.gameGroup.remove(this.gameGroup.children[0]);
         }
@@ -566,7 +665,7 @@ class Game {
         this.player.reset(1, 1);
         this.hasMovedOnce = false;
 
-        // マップデータの生成
+        // 移動・衝突判定に使う論理マップ配列を構築
         const mapData = this.mapManager.mapData;
         const mapMeshes = this.mapManager.mapMeshes;
         const itemMeshes = this.mapManager.itemMeshes;
@@ -577,19 +676,20 @@ class Game {
             itemMeshes[x] = [];
             for (let z = 0; z < this.mapSize; z++) {
                 if (x === 0 || x === this.mapSize - 1 || z === 0 || z === this.mapSize - 1) {
-                    mapData[x][z] = 1; // 外周壁
+                    mapData[x][z] = 1; // 外周の壁
                 } else if ((x === 1 && z === 1) || (x === this.goal.x && z === this.goal.z)) {
-                    mapData[x][z] = 0; // 開始とゴールは安全地帯
+                    mapData[x][z] = 0; // 開始地点とゴールは通行可
                 } else {
                     const rand = Math.random();
-                    if (rand < 0.18) mapData[x][z] = 1;      // 壁
-                    else if (rand < 0.24) mapData[x][z] = 2; // 罠
-                    else mapData[x][z] = 0;                  // 平地
+                    if (rand < 0.18) mapData[x][z] = 1;      // 壊せる壁
+                    else if (rand < 0.23) mapData[x][z] = 2; // 罠タイル
+                    else if (rand < 0.28) mapData[x][z] = 5; // 氷タイル
+                    else mapData[x][z] = 0;
                 }
             }
         }
 
-        // 回復用リンゴを1つだけ配置
+        // ステージごとにリンゴを1つ配置
         const itemCandidates = [];
         for (let x = 1; x < this.mapSize - 1; x++) {
             for (let z = 1; z < this.mapSize - 1; z++) {
@@ -603,7 +703,7 @@ class Game {
             mapData[itemPos.x][itemPos.z] = 3;
         }
 
-        // 敵の生成
+        // ステージ用の敵を生成
         const enemyCount = 3 + Math.floor(this.stage * 1.2);
         for (let i = 0; i < enemyCount; i++) {
             let rx, rz;
@@ -612,10 +712,12 @@ class Game {
                 rz = Math.floor(Math.random() * (this.mapSize - 2)) + 1;
             } while (mapData[rx][rz] !== 0 || (rx === 1 && rz === 1) || (rx === this.goal.x && rz === this.goal.z));
 
-            this.enemies.push(new Enemy(rx, rz));
+            // エリート出現率はステージで少し上昇
+            const isElite = Math.random() < 0.15 + (this.stage * 0.02);
+            this.enemies.push(new Enemy(rx, rz, isElite ? 'elite' : 'normal'));
         }
 
-        // メッシュ構築
+        // ステージメッシュ構築後、GLTFモデルへ差し替え
         this.buildMapGraphics();
         this.loadModels();
         this.updateCameraImmediate();
@@ -630,6 +732,7 @@ class Game {
         const sandTexture = this.mapManager.createGroundTexture('sand');
 
         const tileMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: grassTexture });
+        const iceMat = new THREE.MeshPhongMaterial({ color: 0x88e1ff, shininess: 120, transparent: true, opacity: 0.85 });
         const wallMat = new THREE.MeshPhongMaterial({ color: 0xdfcda3, flatShading: true });
         const trapMat = new THREE.MeshPhongMaterial({ color: 0xcc4444, flatShading: true });
 
@@ -644,8 +747,12 @@ class Game {
 
         for (let x = 0; x < this.mapSize; x++) {
             for (let z = 0; z < this.mapSize; z++) {
-                // 基本の床配置
-                const tile = new THREE.Mesh(tileGeo, tileMat);
+               
+                let currentTileMat = tileMat;
+                if (mapData[x][z] === 5) {
+                    currentTileMat = iceMat;
+                }
+                const tile = new THREE.Mesh(tileGeo, currentTileMat);
                 tile.position.set(x, -0.1, z);
                 tile.receiveShadow = true;
                 this.gameGroup.add(tile);
@@ -681,11 +788,16 @@ class Game {
                     apple.position.set(x, 0.25, z);
                     this.gameGroup.add(apple);
                     itemMeshes[x][z] = apple;
+                } else if (mapData[x][z] === 4) {
+                    const coin = this.mapManager.createCoinItem();
+                    coin.position.set(x, 0.25, z);
+                    this.gameGroup.add(coin);
+                    itemMeshes[x][z] = coin;
                 }
             }
         }
 
-        // 外周の砂地と海を構築
+       
         const beachMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: sandTexture });
         const beachThickness = 3;
         for (let x = -beachThickness; x < this.mapSize + beachThickness; x++) {
@@ -713,7 +825,7 @@ class Game {
         ocean.receiveShadow = true;
         this.gameGroup.add(ocean);
 
-        // プレイヤー初期化用の簡易メッシュ（後ほど 3D モデルに置換）
+       
         this.playerGroup = new THREE.Group();
         const bodyGeo = new THREE.BoxGeometry(0.5, 0.8, 0.5);
         const bodyMat = new THREE.MeshPhongMaterial({ color: 0x2277ff, flatShading: true });
@@ -732,18 +844,19 @@ class Game {
         this.gameGroup.add(this.playerGroup);
         this.player.mesh = this.playerGroup;
 
-        // ゴールメッシュ
+       
         const goalGeo = new THREE.TorusGeometry(0.3, 0.1, 8, 16);
         const goalMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, metalness: 0.5 });
         this.goalMesh = new THREE.Mesh(goalGeo, goalMat);
         this.goalMesh.position.set(this.goal.x, 0.5, this.goal.z);
         this.gameGroup.add(this.goalMesh);
 
-        // 敵のプリミティブ配置
-        const enemyGeo = new THREE.ConeGeometry(0.3, 0.6, 4);
-        const enemyMat = new THREE.MeshPhongMaterial({ color: 0xdd2222, flatShading: true });
+       
         this.enemies.forEach((enemy) => {
             enemy.primitiveGroup = new THREE.Group();
+            const enemyGeo = new THREE.ConeGeometry(0.3, 0.6, 4);
+            const colorHex = (enemy.type === 'elite') ? 0x222222 : 0xdd2222;
+            const enemyMat = new THREE.MeshPhongMaterial({ color: colorHex, flatShading: true });
             const primitiveMesh = new THREE.Mesh(enemyGeo, enemyMat);
             primitiveMesh.position.set(enemy.x, 0, enemy.z);
             primitiveMesh.castShadow = true;
@@ -752,7 +865,7 @@ class Game {
             enemy.mesh = enemy.primitiveGroup;
         });
 
-        // 3Dモデル読み込み後の差し替えタスク定義
+       
         this.pendingReplacements = {
             traps: trapPlacements,
             blocks: attackableBlockPlacements,
@@ -767,7 +880,7 @@ class Game {
         const mapData = this.mapManager.mapData;
         const mapMeshes = this.mapManager.mapMeshes;
 
-        // Gimmick: トラップ (Prop_Bomb)
+       
         if (this.pendingReplacements.traps.length > 0) {
             this.gltfLoader.load('../models/Prop_Bomb.gltf', (gltf) => {
                 const base = Utils.prepareLoadedModel(gltf.scene, { scale: 0.8, y: 0, rotationY: 0 });
@@ -781,10 +894,10 @@ class Game {
                     this.gameGroup.add(clone);
                     mapMeshes[x][z] = clone;
                 });
-            }, undefined, (err) => console.error('Prop_Bomb 読み込み失敗:', err));
+            }, undefined, (err) => console.error('Failed to load Prop_Bomb:', err));
         }
 
-        // Gimmick: 攻撃可能ブロック (Prop_Barrel)
+       
         if (this.pendingReplacements.blocks.length > 0) {
             this.gltfLoader.load('../models/Prop_Barrel.gltf', (gltf) => {
                 const base = Utils.prepareLoadedModel(gltf.scene, { scale: 1.0, y: 0, rotationY: 0 });
@@ -799,10 +912,10 @@ class Game {
                     this.gameGroup.add(clone);
                     mapMeshes[x][z] = clone;
                 });
-            }, undefined, (err) => console.error('Prop_Barrel 読み込み失敗:', err));
+            }, undefined, (err) => console.error('Failed to load Prop_Barrel:', err));
         }
 
-        // Environment: 岩
+        // 環境モデル: 岩とヤシの木
         for (let i = 1; i <= 5; i++) {
             const targets = this.pendingReplacements.rocks.filter((p) => p.variant === i);
             if (targets.length === 0) continue;
@@ -820,10 +933,10 @@ class Game {
                     if (fallback) this.gameGroup.remove(fallback);
                     this.gameGroup.add(clone);
                 });
-            }, undefined, (err) => console.error(`Environment_Rock_${i} 読み込み失敗:`, err));
+            }, undefined, (err) => console.error(`Failed to load Environment_Rock_${i}:`, err));
         }
 
-        // Environment: ヤシの木
+        // 外周プレースホルダーをヤシの木バリエーションへ差し替え
         for (let i = 1; i <= 3; i++) {
             const targets = this.pendingReplacements.palms.filter((p) => p.variant === i);
             if (targets.length === 0) continue;
@@ -841,10 +954,10 @@ class Game {
                     if (fallback) this.gameGroup.remove(fallback);
                     this.gameGroup.add(clone);
                 });
-            }, undefined, (err) => console.error(`Environment_PalmTree_${i} 読み込み失敗:`, err));
+            }, undefined, (err) => console.error(`Failed to load Environment_PalmTree_${i}:`, err));
         }
 
-        // 大型船
+       
         this.gltfLoader.load('../models/Ship_Large.gltf', (gltf) => {
             const ship = Utils.prepareLoadedModel(gltf.scene, { scale: 1.0, y: 0, rotationY: 0 });
             Utils.normalizeAndCenterModel(ship);
@@ -859,9 +972,9 @@ class Game {
             ship.rotation.y = Math.atan2(toGoalX, toGoalZ);
 
             this.gameGroup.add(ship);
-        }, undefined, (err) => console.error('Ship_Large 読み込み失敗:', err));
+        }, undefined, (err) => console.error('Failed to load Ship_Large:', err));
 
-        // プレイヤーモデル
+       
         this.gltfLoader.load('../models/Characters_Anne.gltf', (gltf) => {
             const model = Utils.prepareLoadedModel(gltf.scene, { scale: 0.6, y: 0.0, rotationY: 0 });
             Utils.normalizeAndCenterModel(model);
@@ -878,9 +991,9 @@ class Game {
                 });
                 this.player.playAnimation('Idle');
             }
-        }, undefined, (err) => console.error('Anneモデル読み込み失敗:', err));
+        }, undefined, (err) => console.error('Failed to load Characters_Anne:', err));
 
-        // 敵モデル
+       
         this.gltfLoader.load('../models/Characters_Skeleton.gltf', (gltf) => {
             const baseModel = Utils.prepareLoadedModel(gltf.scene, { scale: 0.7, y: 0, rotationY: Math.PI / 2 });
 
@@ -889,11 +1002,11 @@ class Game {
                 if (typeof THREE !== 'undefined' && THREE.SkeletonUtils && THREE.SkeletonUtils.clone) {
                     enemyModel = THREE.SkeletonUtils.clone(baseModel);
                 } else {
-                    console.warn('THREE.SkeletonUtils 非対応。通常の clone() を試みます。');
+                    console.warn('THREE.SkeletonUtils is unavailable. Falling back to baseModel.clone().');
                     enemyModel = baseModel.clone();
                 }
 
-                // 敵個別のマテリアルクローン
+               
                 Utils.cloneObjectMaterials(enemyModel);
 
                 enemyModel.position.set(enemy.x, 0, enemy.z);
@@ -907,6 +1020,9 @@ class Game {
                 enemy.mesh = enemyModel;
                 this.gameGroup.add(enemyModel);
 
+               
+                enemy.applyTypeAppearance();
+
                 if (gltf.animations && gltf.animations.length > 0) {
                     enemy.mixer = new THREE.AnimationMixer(enemyModel);
                     gltf.animations.forEach((clip) => {
@@ -915,10 +1031,10 @@ class Game {
                     enemy.playAnimation('Idle');
                 }
             });
-        }, undefined, (err) => console.error('Skeletonモデル読み込み失敗:', err));
+        }, undefined, (err) => console.error('Failed to load Characters_Skeleton:', err));
     }
 
-    // --- ゲームUIと状態変化管理 ---
+    // --- UI状態とHUD更新 ---
     updateUI() {
         document.getElementById('hp-text').innerText = `${this.player.hp} / ${this.player.maxHp}`;
         const hpPercent = (this.player.hp / this.player.maxHp) * 100;
@@ -965,12 +1081,13 @@ class Game {
             this.updateUI();
             this.initStage();
             this.isGameOverProcessing = false;
-        }, 1400);
+        }, 2200);
     }
 
-    // --- ゲームアクション・進行制御 ---
+    // --- プレイヤー行動とターン進行 ---
     executeGridMove(moveStep) {
-        if (this.player.isMoving || this.player.hp <= 0) return;
+    // 移動中・攻撃中・死亡時は入力を受け付けない
+        if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         const nextX = this.player.x + this.player.dirX * moveStep;
         const nextZ = this.player.z + this.player.dirZ * moveStep;
@@ -983,7 +1100,7 @@ class Game {
             return;
         }
 
-        // 隣接敵がいる場合の攻撃無効化チェック
+        // 隣接状態からの移動ターンは敵の即時反撃を抑制
         const hadAdjacent = this.enemies.some((e) => {
             if (e.isDying || e.isFlashing) return false;
             return (Math.abs(e.x - this.player.x) + Math.abs(e.z - this.player.z)) === 1;
@@ -1005,11 +1122,20 @@ class Game {
     }
 
     executeJump() {
-        if (this.player.isMoving || this.player.hp <= 0) return;
+        // ジャンプは手前と着地点の両方が有効な場合のみ実行
+        if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
+        const midX = this.player.x + this.player.dirX;
+        const midZ = this.player.z + this.player.dirZ;
         const landX = this.player.x + this.player.dirX * 2;
         const landZ = this.player.z + this.player.dirZ * 2;
         const mapData = this.mapManager.mapData;
+
+        // 目の前が壁ならジャンプ不可
+        if (mapData[midX] && mapData[midX][midZ] === 1) {
+            console.log("Jump blocked by obstacle in front.");
+            return; 
+        }
 
         if (!mapData[landX] || mapData[landX][landZ] === 1) return;
 
@@ -1041,41 +1167,62 @@ class Game {
     }
 
     executeAttack() {
-        if (this.player.isMoving || this.player.hp <= 0) return;
+        if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         const targetX = this.player.x + this.player.dirX;
         const targetZ = this.player.z + this.player.dirZ;
 
+        // 攻撃アニメ中は入力をロック
+        this.player.isAttacking = true;
         this.player.playAnimation('Sword');
+
         const swordAction = this.player.animations['Sword'];
         const duration = swordAction ? swordAction.getClip().duration * 1000 : 500;
         const halfDuration = duration / 2;
 
+        // 左利きスイング位置に斬撃VFXを生成
+        this.mapManager.createSlashEffect(this.player.x, this.player.z, this.player.dirX, this.player.dirZ);
+
         setTimeout(() => {
-            if (this.player.hp > 0) this.player.playAnimation('Idle');
+            if (this.player.hp > 0) {
+                this.player.playAnimation('Idle');
+            }
+            this.player.isAttacking = false; // アニメ終了で入力ロック解除
         }, duration);
 
-        const hitEnemy = this.enemies.find((e) => e.x === targetX && e.z === targetZ);
+        // 既に死亡処理中の敵は無視
+        const hitEnemy = this.enemies.find((e) => e.x === targetX && e.z === targetZ && !e.isDying);
         if (hitEnemy) {
+            // 幽霊当たり判定防止のため占有を即時解除
+            hitEnemy.isDying = true;
+            
+            // 見た目は元位置のまま、論理位置のみ盤外へ退避
+            const deadX = hitEnemy.x;
+            const deadZ = hitEnemy.z;
+            hitEnemy.x = -999;
+            hitEnemy.z = -999;
+            hitEnemy.targetX = -999;
+            hitEnemy.targetZ = -999;
+
+            if (hitEnemy.mesh) {
+                hitEnemy.mesh.position.set(deadX, 0, deadZ);
+            }
+
             hitEnemy.faceToward(this.player.x, this.player.z);
             hitEnemy.shouldActOnce = true;
             hitEnemy.skipCounterOnce = true;
-            hitEnemy.targetX = hitEnemy.x;
-            hitEnemy.targetZ = hitEnemy.z;
 
-            // 刀身ヒットの中間タイミング
+            // 刀の中間タイミングでフラッシュ
             setTimeout(() => {
                 hitEnemy.flashDamage();
             }, halfDuration);
 
-            // 攻撃による撃破シーケンス
+            // 死亡演出後にリスポーンとスコア加算
             setTimeout(() => {
                 const deadAction = hitEnemy.animations['Death'] || hitEnemy.animations['death'];
                 if (hitEnemy.mixer && deadAction) {
-                    hitEnemy.isDying = true;
                     deadAction.loop = THREE.LoopOnce;
                     deadAction.clampWhenFinished = true;
-                    
                     hitEnemy.playAnimation(deadAction._clip.name);
 
                     const deadDuration = deadAction.getClip().duration * 1000;
@@ -1087,7 +1234,7 @@ class Game {
                     this.addScore(CONFIG.SCORE_ENEMY);
                     this.respawnEnemy(hitEnemy);
                 }
-            }, halfDuration + 260 + 300);
+            }, halfDuration + CONFIG.DAMAGE_FLASH_DURATION);
 
             this.moveEnemies();
             return;
@@ -1096,6 +1243,7 @@ class Game {
         const mapData = this.mapManager.mapData;
         const mapMeshes = this.mapManager.mapMeshes;
 
+        // 壊せる壁s/traps can drop items.
         if (mapData[targetX] && (mapData[targetX][targetZ] === 1 || mapData[targetX][targetZ] === 2)) {
             if (targetX > 0 && targetX < this.mapSize - 1 && targetZ > 0 && targetZ < this.mapSize - 1) {
                 const obstacle = mapMeshes[targetX][targetZ];
@@ -1111,7 +1259,27 @@ class Game {
                             targetObstacle.getWorldPosition(pos);
                             this.gameGroup.remove(targetObstacle);
                             mapMeshes[targetX][targetZ] = null;
-                            mapData[targetX][targetZ] = 0;
+                            
+                            // 障害物ドロップテーブルを抽選
+                            const dice = Math.random();
+                            if (dice < 0.25) {
+                                // 25%: リンゴ
+                                mapData[targetX][targetZ] = 3;
+                                const apple = this.mapManager.createAppleItem();
+                                apple.position.set(targetX, 0.25, targetZ);
+                                this.gameGroup.add(apple);
+                                this.mapManager.itemMeshes[targetX][targetZ] = apple;
+                            } else if (dice < 0.55) {
+                                // 30%: コイン
+                                mapData[targetX][targetZ] = 4;
+                                const coin = this.mapManager.createCoinItem();
+                                coin.position.set(targetX, 0.25, targetZ);
+                                this.gameGroup.add(coin);
+                                this.mapManager.itemMeshes[targetX][targetZ] = coin;
+                            } else {
+                                mapData[targetX][targetZ] = 0; // ドロップなし
+                            }
+
                             this.mapManager.createExplosion(pos);
                             this.moveEnemies();
                         }
@@ -1121,7 +1289,7 @@ class Game {
         }
     }
 
-    // --- 敵の行動・AI処理 ---
+    // --- 敵行動とAI ---
     moveEnemies() {
         this.enemyTurnId++;
         const currentTurn = this.enemyTurnId;
@@ -1132,18 +1300,29 @@ class Game {
         const resZ = this.player.isMoving ? this.player.targetZ : this.player.z;
         const mapData = this.mapManager.mapData;
 
+        const isAdjacentToResolvedPlayer = (x, z) => (Math.abs(x - resX) + Math.abs(z - resZ)) === 1;
+
         // 1) 敵の移動意思決定
         this.enemies.forEach((enemy) => {
             if (enemy.isDying || enemy.skipCounterOnce) return;
 
-            const dx = Math.sign(this.player.x - enemy.x);
-            const dz = Math.sign(this.player.z - enemy.z);
-            const preferX = Math.abs(this.player.x - enemy.x) >= Math.abs(this.player.z - enemy.z);
+            // プレイヤー確定位置に既に隣接していれば移動せず攻撃フェーズへ
+            if (isAdjacentToResolvedPlayer(enemy.x, enemy.z)) {
+                enemy.targetX = enemy.x;
+                enemy.targetZ = enemy.z;
+                enemy.isMoving = false;
+                return;
+            }
+
+            const dx = Math.sign(resX - enemy.x);
+            const dz = Math.sign(resZ - enemy.z);
+            const preferX = Math.abs(resX - enemy.x) >= Math.abs(resZ - enemy.z);
 
             const candidateMoves = preferX
                 ? [
                     { x: enemy.x + dx, z: enemy.z },
                     { x: enemy.x, z: enemy.z + dz },
+                    { x: enemy.x, z: enemy.z },
                     { x: enemy.x, z: enemy.z + 1 },
                     { x: enemy.x, z: enemy.z - 1 },
                     { x: enemy.x + 1, z: enemy.z },
@@ -1152,6 +1331,7 @@ class Game {
                 : [
                     { x: enemy.x, z: enemy.z + dz },
                     { x: enemy.x + dx, z: enemy.z },
+                    { x: enemy.x, z: enemy.z },
                     { x: enemy.x + 1, z: enemy.z },
                     { x: enemy.x - 1, z: enemy.z },
                     { x: enemy.x, z: enemy.z + 1 },
@@ -1162,7 +1342,7 @@ class Game {
                 if (!mapData[tx] || mapData[tx][tz] === 1) return false;
                 if (tx === this.goal.x && tz === this.goal.z) return false;
                 if (tx === resX && tz === resZ) return false;
-                if (tx === enemy.x && tz === enemy.z) return false;
+                if (tx === enemy.x && tz === enemy.z) return true;
 
                 const occupied = this.enemies.some((e) => {
                     return e !== enemy && ((e.x === tx && e.z === tz) || (e.targetX === tx && e.targetZ === tz));
@@ -1174,15 +1354,16 @@ class Game {
             if (next) {
                 enemy.targetX = next.x;
                 enemy.targetZ = next.z;
-                enemy.isMoving = true;
-                enemy.movedOnTurn = currentTurn;
+                const didMove = next.x !== enemy.x || next.z !== enemy.z;
+                enemy.isMoving = didMove;
+                enemy.movedOnTurn = didMove ? currentTurn : 0;
 
                 const mdx = next.x - enemy.x;
                 const mdz = next.z - enemy.z;
                 if (mdx !== 0 || mdz !== 0) {
                     enemy.targetAngle = Math.atan2(mdx, mdz);
                 }
-                enemy.playAnimation('Run');
+                enemy.playAnimation(didMove ? 'Run' : 'Idle');
             } else if (enemy.shouldActOnce) {
                 enemy.shouldActOnce = false;
             }
@@ -1193,7 +1374,7 @@ class Game {
             if (suppress || enemy.isDying || enemy.isFlashing) return;
             if (enemy.movedOnTurn === currentTurn) return;
 
-            const dist = Math.abs(enemy.x - this.player.x) + Math.abs(enemy.z - this.player.z);
+            const dist = Math.abs(enemy.x - resX) + Math.abs(enemy.z - resZ);
             if (dist !== 1) return;
 
             if (enemy.skipCounterOnce) {
@@ -1204,7 +1385,7 @@ class Game {
 
             if (!enemy.hasCountered) {
                 enemy.hasCountered = true;
-                enemy.faceToward(this.player.x, this.player.z);
+                enemy.faceToward(resX, resZ);
                 
                 const action = enemy.playAnimation('Sword');
                 if (action) {
@@ -1215,7 +1396,8 @@ class Game {
                     }, duration);
                 }
 
-                this.player.applyDamage(CONFIG.PLAYER_DAMAGE);
+                // エリート敵は強いダメージを与える
+                this.player.applyDamage(enemy.damage);
                 this.reactToPlayerDamage();
                 
                 if (this.player.hp <= 0) {
@@ -1224,7 +1406,7 @@ class Game {
             }
         });
 
-        // 3) キャンセルフラグの終端クリーンアップ
+        // 3) 一時フラグの後始末
         this.enemies.forEach((enemy) => {
             if (enemy.skipCounterOnce) {
                 enemy.skipCounterOnce = false;
@@ -1252,6 +1434,7 @@ class Game {
             this.player.prevZ = knockbackZ;
         }
 
+        // 隣接敵との接触でダメージ
         this.player.applyDamage(CONFIG.PLAYER_DAMAGE);
         this.reactToPlayerDamage();
 
@@ -1297,7 +1480,7 @@ class Game {
             }, duration);
         }
 
-        this.player.applyDamage(CONFIG.PLAYER_DAMAGE);
+        this.player.applyDamage(clashEnemy.damage);
         this.reactToPlayerDamage();
 
         if (this.player.hp <= 0) {
@@ -1344,32 +1527,44 @@ class Game {
         const tile = this.findEnemyRespawnTile(enemy);
         if (!tile) return;
 
-        enemy.resetState(tile.x, tile.z);
+        // リスポーン時にエリート判定を再計算
+        const isElite = Math.random() < 0.15 + (this.stage * 0.02);
+        enemy.resetState(tile.x, tile.z, isElite ? 'elite' : 'normal');
     }
 
     isEnemyAt(x, z) {
-        return this.enemies.some((e) => (e.x === x && e.z === z) || (e.targetX === x && e.targetZ === z));
+        return this.enemies.some((e) => !e.isDying && ((e.x === x && e.z === z) || (e.targetX === x && e.targetZ === z)));
     }
 
     isEnemyOccupied(x, z) {
         return this.enemies.some((e) => !e.isDying && e.x === x && e.z === z);
     }
 
-    // --- タイル踏み込み時イベント ---
+    // --- 着地時タイルイベント ---
     handleTileEvents() {
         const mapData = this.mapManager.mapData;
         const itemMeshes = this.mapManager.itemMeshes;
+        const currentTile = mapData[this.player.x][this.player.z];
 
-        // アイテム獲得
-        if (mapData[this.player.x][this.player.z] === 3) {
+        // アイテム: 回復リンゴ
+        if (currentTile === 3) {
             this.player.heal(CONFIG.HEAL_AMOUNT);
             this.updateUI();
             this.gameGroup.remove(itemMeshes[this.player.x][this.player.z]);
             mapData[this.player.x][this.player.z] = 0;
+            console.log("Collected apple: HP restored.");
         }
 
-        // トラップ踏み
-        if (mapData[this.player.x][this.player.z] === 2 && !this.mapManager.flashingTrapTiles.has(`${this.player.x},${this.player.z}`)) {
+        // アイテム: スコアコイン
+        if (currentTile === 4) {
+            this.addScore(CONFIG.SCORE_COIN);
+            this.gameGroup.remove(itemMeshes[this.player.x][this.player.z]);
+            mapData[this.player.x][this.player.z] = 0;
+            console.log("Collected coin: score +100");
+        }
+
+        // 罠タイル
+        if (currentTile === 2 && !this.mapManager.flashingTrapTiles.has(`${this.player.x},${this.player.z}`)) {
             const trapX = this.player.x;
             const trapZ = this.player.z;
 
@@ -1383,10 +1578,33 @@ class Game {
             }
         }
 
-        // 敵と同じセルに侵入
+        // 氷タイル gimmick: auto-slide one extra tile
+        if (currentTile === 5) {
+            // 現在の進行方向
+            const slideX = this.player.dirX;
+            const slideZ = this.player.dirZ;
+            const nextX = this.player.x + slideX;
+            const nextZ = this.player.z + slideZ;
+
+            // 次タイルが通行可能かつ敵不在なら滑走
+            if (mapData[nextX] && mapData[nextX][nextZ] !== 1 && !this.isEnemyAt(nextX, nextZ)) {
+                console.log("Sliding on ice tile.");
+                setTimeout(() => {
+                    this.player.prevX = this.player.x;
+                    this.player.prevZ = this.player.z;
+                    this.player.targetX = nextX;
+                    this.player.targetZ = nextZ;
+                    this.player.isMoving = true;
+                    this.player.playAnimation('Run');
+                }, 100);
+                return; // 新たな移動が始まるためこのフレームの処理を終了
+            }
+        }
+
+        // プレイヤーと敵が同一マスに重なった場合
         this.enemies.forEach((enemy) => {
             if (enemy.x === this.player.x && enemy.z === this.player.z && !enemy.isDying && !enemy.isFlashing && enemy.movedOnTurn !== this.enemyTurnId) {
-                this.player.applyDamage(CONFIG.PLAYER_DAMAGE);
+                this.player.applyDamage(enemy.damage);
                 this.reactToPlayerDamage();
 
                 const action = enemy.playAnimation('Sword');
@@ -1405,7 +1623,7 @@ class Game {
 
         // ゴール到達
         if (this.player.x === this.goal.x && this.player.z === this.goal.z) {
-            alert(`島を制覇！ステージ ${this.stage} クリア。次の島へ。`);
+            alert(`Stage ${this.stage} cleared. Advancing to next stage.`);
             this.stage++;
             this.player.heal(CONFIG.HEAL_AMOUNT);
             this.initStage();
@@ -1413,14 +1631,14 @@ class Game {
     }
 
     removeStartUI() {
-        const ui = document.getElementById('ui');
-        if (ui) ui.remove();
+        const ui = document.getElementById('guide-ui');
+        // オーバーレイ表示は updateOverlayVisibility で管理
     }
 
-    // --- インプット・操作系 ---
+    // --- キーボード・タッチ・ジョイスティック入力 ---
     setupKeyboardControls() {
         window.addEventListener('keydown', (e) => {
-            if (this.player.isMoving || this.player.hp <= 0) return;
+            if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
             this.removeStartUI();
 
             if (e.key === ' ') { this.executeAttack(); return; }
@@ -1458,7 +1676,7 @@ class Game {
 
         if (!joystickZone) return;
 
-        const canInput = () => !this.player.isMoving && this.player.hp > 0;
+        const canInput = () => !this.player.isMoving && !this.player.isAttacking && this.player.hp > 0;
 
         const bindAction = (btn, action) => {
             if (!btn) return;
@@ -1514,7 +1732,7 @@ class Game {
         bindDirection(btnLeft, 'left');
         bindDirection(btnRight, 'right');
 
-        // nipplejs ジョイスティック構築
+        // モバイル向けの動的ジョイスティック
         const joystick = nipplejs.create({
             zone: joystickZone,
             size: 120,
@@ -1574,7 +1792,7 @@ class Game {
     }
 
     applyJoystickInput() {
-        if (!this.joystickInput.active || this.player.isMoving || this.player.hp <= 0) return;
+        if (!this.joystickInput.active || this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         if (this.joystickInput.turn !== 0) {
             this.player.targetAngle += this.joystickInput.turn * Math.PI / 2;
@@ -1586,7 +1804,7 @@ class Game {
         }
     }
 
-    // --- カメラ・レンダリング・ループ処理 ---
+    // --- カメラ・遮蔽・フレームループ ---
     updateCameraImmediate() {
         const px = this.player.x;
         const pz = this.player.z;
@@ -1611,7 +1829,7 @@ class Game {
     }
 
     updatePlayerOcclusionVisibility() {
-        // 全遮蔽物の表示を一度リセット
+        // このフレームのレイキャスト前に隠した遮蔽物を復元
         this.occludedOccluderMeshes.forEach((mesh) => { mesh.visible = true; });
         this.occludedOccluderMeshes.clear();
 
@@ -1630,7 +1848,7 @@ class Game {
         hits.forEach((hit) => {
             const obj = hit.object;
             
-            // プレイヤー自身の子オブジェクトは除外
+            // プレイヤー階層は除外し、マップ遮蔽物のみ非表示
             let cur = obj;
             let isPlayerChild = false;
             while (cur) {
@@ -1654,8 +1872,8 @@ class Game {
 
     setupGitInfo() {
         window.__GIT_INFO__ = {
-            commit: 'c5c08ab-fix vkey',
-            date: '2026-07-12 09:49'
+            commit: 'e2a4b89-vfx and bugfixes',
+            date: '2026-07-20 14:15'
         };
 
         const commitInfo = document.getElementById('commit-info');
@@ -1686,7 +1904,7 @@ class Game {
 
         const delta = this.playerClock.getDelta();
 
-        // プレイヤーのアニメーション・回転・移動処理
+        // プレイヤーのアニメ更新と移動補間
         this.player.updateAnimation(delta);
 
         if (this.playerGroup) {
@@ -1717,10 +1935,14 @@ class Game {
                 this.playerGroup.position.set(this.player.x, 0, this.player.z);
                 this.player.isMoving = false;
                 this.player.isJumping = false;
-                this.player.playAnimation('Idle');
+                
+                if (!this.player.isAttacking) {
+                    this.player.playAnimation('Idle');
+                }
 
-                // 敵の移動完了の同期
+                // 補間完了時に敵の論理座標を確定
                 this.enemies.forEach((enemy) => {
+                    if (enemy.isDying) return;
                     enemy.x = enemy.targetX;
                     enemy.z = enemy.targetZ;
                     if (enemy.mesh) enemy.mesh.position.set(enemy.x, 0, enemy.z);
@@ -1734,9 +1956,11 @@ class Game {
             }
         }
 
-        // 敵のアニメーション・移動・回転更新
+        // 敵のアニメ更新と移動補間
         this.enemies.forEach((enemy) => {
             enemy.updateAnimation(delta);
+
+            if (enemy.isDying) return;
 
             if (enemy.mesh && (this.player.isMoving || enemy.isMoving)) {
                 enemy.mesh.position.x += (enemy.targetX - enemy.mesh.position.x) * CONFIG.MOVE_SPEED;
@@ -1767,16 +1991,17 @@ class Game {
             }
         });
 
-        // カメラ更新
+        // カメラの追従補間を更新
         this.updateCameraLerp();
 
-        // ゴール & アイテムの回転演出
+        // 視認性向上のためゴールを回転
         if (this.goalMesh) this.goalMesh.rotation.y += 0.02;
 
         const itemMeshes = this.mapManager.itemMeshes;
         for (let x = 0; x < this.mapSize; x++) {
             for (let z = 0; z < this.mapSize; z++) {
                 if (itemMeshes[x] && itemMeshes[x][z]) {
+                    // 収集アイテムを浮遊・回転させる
                     itemMeshes[x][z].position.y = 0.25 + Math.sin(Date.now() * 0.003 + x) * 0.05;
                     itemMeshes[x][z].rotation.y += 0.03;
                 }
@@ -1785,17 +2010,21 @@ class Game {
 
         this.updatePlayerOcclusionVisibility();
         this.mapManager.updateExplosions(delta);
+        this.mapManager.updateSlashEffects(delta);
 
         this.renderer.render(this.scene, this.camera);
     }
 }
 
-// --- ゲームエントリーポイント ---
+// --- エントリーポイント ---
 (() => {
     if (typeof THREE !== 'undefined' && (!THREE.SkeletonUtils || !THREE.SkeletonUtils.clone)) {
-        console.warn('THREE.SkeletonUtils が見つかりません。通常の clone() を使用します。');
+        console.warn('THREE.SkeletonUtils not found. Skeleton clone will use fallback clone().');
     }
 
     const game = new Game();
     game.start();
 })();
+
+
+
