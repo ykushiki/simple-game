@@ -60,6 +60,9 @@ const Utils = {
 
     flashModelRed(root, durationMs = 220) {
         if (!root) return;
+        // 世代管理: applyTypeAppearance などで root._flashGen を進めると、進行中の復元をキャンセルできる
+        const gen = (root.userData._flashGen || 0) + 1;
+        root.userData._flashGen = gen;
         const touchedMaterials = new Set();
 
         root.traverse((child) => {
@@ -70,17 +73,30 @@ const Utils = {
                 if (!mat || !mat.emissive || touchedMaterials.has(mat)) return;
                 touchedMaterials.add(mat);
 
-                const originalEmissive = mat.emissive.clone();
-                const originalIntensity = typeof mat.emissiveIntensity === 'number' ? mat.emissiveIntensity : null;
+                // 連続フラッシュ時に色が累積しないよう「フラッシュ前の状態」をユーザーデータへ退避
+                if (!mat.userData) mat.userData = {};
+                if (!mat.userData._preFlashState) {
+                    mat.userData._preFlashState = {
+                        emissive: mat.emissive.clone(),
+                        intensity: typeof mat.emissiveIntensity === 'number' ? mat.emissiveIntensity : null
+                    };
+                }
+                const baseState = mat.userData._preFlashState;
 
                 mat.emissive.setHex(0xff2222);
                 if (typeof mat.emissiveIntensity === 'number') {
-                    mat.emissiveIntensity = Math.max(1.2, mat.emissiveIntensity);
+                    mat.emissiveIntensity = Math.max(1.2, baseState.intensity != null ? baseState.intensity : 1.2);
                 }
 
                 setTimeout(() => {
-                    mat.emissive.copy(originalEmissive);
-                    if (originalIntensity !== null) mat.emissiveIntensity = originalIntensity;
+                    // より新しい flash / respawn によって世代が進んでいれば復元しない
+                    if (root.userData._flashGen !== gen) {
+                        if (mat.userData) delete mat.userData._preFlashState;
+                        return;
+                    }
+                    mat.emissive.copy(baseState.emissive);
+                    if (baseState.intensity != null) mat.emissiveIntensity = baseState.intensity;
+                    if (mat.userData) delete mat.userData._preFlashState;
                 }, durationMs);
             });
         });
@@ -195,6 +211,8 @@ class Enemy extends CharacterBase {
         this.skipCounterOnce = false;
         this.hasCountered = false;
         this.movedOnTurn = 0;
+        // 一度でも被弾した敵はプレイヤーへの攻撃機能を永続的に喪失する
+        this.canAttack = true;
         
         // エリート敵は与ダメージが高い
         this.damage = (type === 'elite') ? CONFIG.PLAYER_DAMAGE * 1.5 : CONFIG.PLAYER_DAMAGE;
@@ -214,6 +232,8 @@ class Enemy extends CharacterBase {
         this.skipCounterOnce = false;
         this.hasCountered = false;
         this.movedOnTurn = 0;
+        // リスポーン時は攻撃機能を復帰
+        this.canAttack = true;
         this.type = type;
         this.damage = (type === 'elite') ? CONFIG.PLAYER_DAMAGE * 1.5 : CONFIG.PLAYER_DAMAGE;
 
@@ -230,10 +250,14 @@ class Enemy extends CharacterBase {
 
     applyTypeAppearance() {
         if (!this.mesh) return;
+        // 進行中の flashModelRed 復元をキャンセルし、リスポーン後の見た目が上書きされないようにする
+        this.mesh.userData._flashGen = (this.mesh.userData._flashGen || 0) + 1;
         this.mesh.traverse((child) => {
             if (child.isMesh && child.material) {
                 const materials = Array.isArray(child.material) ? child.material : [child.material];
                 materials.forEach((mat) => {
+                    // 前回のフラッシュ退避データはリセット
+                    if (mat.userData && mat.userData._preFlashState) delete mat.userData._preFlashState;
                     if (this.type === 'elite') {
                        
                         if (mat.color) mat.color.setHex(0x111111);
@@ -243,6 +267,7 @@ class Enemy extends CharacterBase {
                         if (mat.color) mat.color.setHex(0xffffff);
                         if (mat.emissive) mat.emissive.setHex(0x000000);
                     }
+                    if (typeof mat.emissiveIntensity === 'number') mat.emissiveIntensity = 1.0;
                 });
             }
         });
@@ -381,6 +406,18 @@ class MapManager {
         texture.encoding = THREE.sRGBEncoding;
         texture.anisotropy = Math.min(8, this.game.renderer.capabilities.getMaxAnisotropy());
         return texture;
+    }
+
+    // 仕様: 回復アイテム（リンゴ）は 1 フィールドにつき 1 個のみ
+    hasAppleOnField() {
+        for (let x = 0; x < this.mapData.length; x++) {
+            const row = this.mapData[x];
+            if (!row) continue;
+            for (let z = 0; z < row.length; z++) {
+                if (row[z] === 3) return true;
+            }
+        }
+        return false;
     }
 
     createAppleItem() {
@@ -1118,24 +1155,17 @@ class Game {
         this.updateOverlayVisibility();
         this.moveEnemies();
 
+        if (this.resolveSameTileContact()) return;
         if (this.resolveHeadOnClash()) return;
     }
 
     executeJump() {
-        // ジャンプは手前と着地点の両方が有効な場合のみ実行
+        // ジャンプは着地点が有効な場合に実行（目の前の障害物は跳躍で飛び越える）
         if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
-        const midX = this.player.x + this.player.dirX;
-        const midZ = this.player.z + this.player.dirZ;
         const landX = this.player.x + this.player.dirX * 2;
         const landZ = this.player.z + this.player.dirZ * 2;
         const mapData = this.mapManager.mapData;
-
-        // 目の前が壁ならジャンプ不可
-        if (mapData[midX] && mapData[midX][midZ] === 1) {
-            console.log("Jump blocked by obstacle in front.");
-            return; 
-        }
 
         if (!mapData[landX] || mapData[landX][landZ] === 1) return;
 
@@ -1163,6 +1193,7 @@ class Game {
         this.updateOverlayVisibility();
         this.moveEnemies();
 
+        if (this.resolveSameTileContact()) return;
         if (this.resolveHeadOnClash()) return;
     }
 
@@ -1211,6 +1242,8 @@ class Game {
             hitEnemy.faceToward(this.player.x, this.player.z);
             hitEnemy.shouldActOnce = true;
             hitEnemy.skipCounterOnce = true;
+            // 仕様：攻撃を受けた敵は以降の攻撃機能を喪失（死亡・リスポーンでリセット）
+            hitEnemy.canAttack = false;
 
             // 刀の中間タイミングでフラッシュ
             setTimeout(() => {
@@ -1261,9 +1294,11 @@ class Game {
                             mapMeshes[targetX][targetZ] = null;
                             
                             // 障害物ドロップテーブルを抽選
+                            // 仕様：回復アイテム（リンゴ）は 1 フィールドにつき 1 個のみ出現
+                            const appleExists = this.mapManager.hasAppleOnField();
                             const dice = Math.random();
-                            if (dice < 0.25) {
-                                // 25%: リンゴ
+                            if (dice < 0.25 && !appleExists) {
+                                // 25%: リンゴ（既にフィールドに存在する場合はコインに変換）
                                 mapData[targetX][targetZ] = 3;
                                 const apple = this.mapManager.createAppleItem();
                                 apple.position.set(targetX, 0.25, targetZ);
@@ -1341,7 +1376,7 @@ class Game {
             const canMoveTo = (tx, tz) => {
                 if (!mapData[tx] || mapData[tx][tz] === 1) return false;
                 if (tx === this.goal.x && tz === this.goal.z) return false;
-                if (tx === resX && tz === resZ) return false;
+                // 仕様: 敵はプレイヤー確定位置マスへも移動可能（同マス接触は resolveSameTileContact で処理）
                 if (tx === enemy.x && tz === enemy.z) return true;
 
                 const occupied = this.enemies.some((e) => {
@@ -1373,6 +1408,8 @@ class Game {
         this.enemies.forEach((enemy) => {
             if (suppress || enemy.isDying || enemy.isFlashing) return;
             if (enemy.movedOnTurn === currentTurn) return;
+            // 仕様: 一度でも被弾した敵は攻撃機能を喪失
+            if (!enemy.canAttack) return;
 
             const dist = Math.abs(enemy.x - resX) + Math.abs(enemy.z - resZ);
             if (dist !== 1) return;
@@ -1398,7 +1435,8 @@ class Game {
 
                 // エリート敵は強いダメージを与える
                 this.player.applyDamage(enemy.damage);
-                this.reactToPlayerDamage();
+                // 仕様: 攻撃元の敵から離れる方向へノックバック
+                this.knockbackPlayerFrom(enemy.x, enemy.z);
                 
                 if (this.player.hp <= 0) {
                     this.handleGameOver("敵に敗北してしまった…");
@@ -1443,6 +1481,58 @@ class Game {
         }
     }
 
+    // 仕様: 接触(同じターンに同じマスに入った) → 敵の攻撃がプレイヤーに当たり、プレイヤーは元の位置に戻される
+    resolveSameTileContact() {
+        const playerFromX = this.player.x;
+        const playerFromZ = this.player.z;
+        const playerToX = this.player.targetX;
+        const playerToZ = this.player.targetZ;
+
+        // プレイヤーが実際に移動していない場合は「同じマスに入った」に該当しない
+        if (playerToX === playerFromX && playerToZ === playerFromZ) return false;
+
+        const contactEnemy = this.enemies.find((e) => {
+            if (e.isDying) return false;
+            // 既にそのマスにいた敵は「入った」ではないので除外
+            if (e.x === playerToX && e.z === playerToZ) return false;
+            return e.targetX === playerToX && e.targetZ === playerToZ;
+        });
+
+        if (!contactEnemy) return false;
+
+        // プレイヤーを元位置に戻す
+        this.player.targetX = playerFromX;
+        this.player.targetZ = playerFromZ;
+        this.player.isMoving = false;
+        this.player.isJumping = false;
+        this.player.jumpTimer = 0;
+        if (this.playerGroup) this.playerGroup.position.set(playerFromX, 0, playerFromZ);
+
+        // 接触した敵は移動をキャンセルしプレイヤー方向を向く
+        contactEnemy.targetX = contactEnemy.x;
+        contactEnemy.targetZ = contactEnemy.z;
+        contactEnemy.isMoving = false;
+        contactEnemy.faceToward(playerFromX, playerFromZ);
+
+        // 攻撃機能を喪失している敵は攻撃演出/ダメージなし
+        if (contactEnemy.canAttack) {
+            const action = contactEnemy.playAnimation('Sword');
+            if (action) {
+                const duration = action.getClip().duration * 1000;
+                setTimeout(() => {
+                    if (contactEnemy.mesh && !contactEnemy.isDying) contactEnemy.playAnimation('Idle');
+                }, duration);
+            }
+            this.player.applyDamage(contactEnemy.damage);
+            // プレイヤーは既に元位置へ戻されているため、追加のノックバックは行わない
+
+            if (this.player.hp <= 0) {
+                this.handleGameOver("敵に敗北してしまった…");
+            }
+        }
+        return true;
+    }
+
     resolveHeadOnClash() {
         const playerFromX = this.player.x;
         const playerFromZ = this.player.z;
@@ -1481,7 +1571,7 @@ class Game {
         }
 
         this.player.applyDamage(clashEnemy.damage);
-        this.reactToPlayerDamage();
+        // ヘッドオン衝突はプレイヤーを既に元位置へ戻しているため、追加のノックバックは行わない
 
         if (this.player.hp <= 0) {
             this.handleGameOver("敵に敗北してしまった…");
@@ -1492,7 +1582,8 @@ class Game {
     reactToPlayerDamage() {
         const canKnockback = this.mapManager.mapData[this.player.prevX]
             && this.mapManager.mapData[this.player.prevX][this.player.prevZ] !== 1
-            && (this.player.prevX !== this.player.x || this.player.prevZ !== this.player.z);
+            && (this.player.prevX !== this.player.x || this.player.prevZ !== this.player.z)
+            && !this.isEnemyOccupied(this.player.prevX, this.player.prevZ);
 
         if (canKnockback) {
             this.player.targetX = this.player.prevX;
@@ -1501,6 +1592,32 @@ class Game {
             this.player.isJumping = false;
             this.player.jumpTimer = 0;
         }
+    }
+
+    // 攻撃元の座標から離れる方向に 1 マスノックバックする（後ろから攻撃されて敵側に押される不具合対策）
+    knockbackPlayerFrom(attackerX, attackerZ) {
+        const dx = Math.sign(this.player.x - attackerX);
+        const dz = Math.sign(this.player.z - attackerZ);
+        if (dx === 0 && dz === 0) return;
+
+        const bx = this.player.x + dx;
+        const bz = this.player.z + dz;
+        const mapData = this.mapManager.mapData;
+
+        const canKnockback = mapData[bx]
+            && mapData[bx][bz] !== 1
+            && !this.isEnemyOccupied(bx, bz)
+            && !(bx === this.player.x && bz === this.player.z);
+
+        if (!canKnockback) return;
+
+        this.player.prevX = this.player.x;
+        this.player.prevZ = this.player.z;
+        this.player.targetX = bx;
+        this.player.targetZ = bz;
+        this.player.isMoving = true;
+        this.player.isJumping = false;
+        this.player.jumpTimer = 0;
     }
 
     findEnemyRespawnTile(excludeEnemy) {
@@ -1605,7 +1722,7 @@ class Game {
         this.enemies.forEach((enemy) => {
             if (enemy.x === this.player.x && enemy.z === this.player.z && !enemy.isDying && !enemy.isFlashing && enemy.movedOnTurn !== this.enemyTurnId) {
                 this.player.applyDamage(enemy.damage);
-                this.reactToPlayerDamage();
+                this.knockbackPlayerFrom(enemy.x, enemy.z);
 
                 const action = enemy.playAnimation('Sword');
                 if (action) {

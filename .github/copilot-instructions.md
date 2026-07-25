@@ -4,5 +4,14 @@
 
 - instruction.md
 
-実装は instruction.md の仕様を優先し、矛盾する変更は行わないこと。
+実装は 各ゲームディレクトリ内のinstruction.md の仕様を優先し、矛盾する変更は行わないこと。
 仕様変更が必要な場合は、先に instruction.md を更新してからコードを変更すること。
+
+- 3d_action/
+3Dアクションゲーム
+
+- shooging/
+3Dシューティングゲーム
+
+- models/
+3Dモデル・アニメーションのリソース
