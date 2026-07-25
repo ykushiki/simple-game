@@ -1,7 +1,15 @@
 ﻿// --- ゲーム全体の設定 ---
 const CONFIG = {
+    MAP_LAYOUT_MODE: 'mild_maze', // 'legacy' | 'mild_maze'
     INITIAL_MAP_SIZE: 15,
     MAP_SIZE_INCREMENT: 2,
+    MILD_MAZE_MAP_SIZE: 35,
+    MILD_MAZE_BLOCK_DENSITY: 0.80,
+    MILD_MAZE_SMOOTHING_PASSES: 2,
+    MILD_MAZE_GOAL_MIN_DISTANCE: 50,
+    MILD_MAZE_GOAL_MAX_DISTANCE: 100,
+    MILD_MAZE_GENERATION_ATTEMPTS: 1,
+    STAGE_TIME_LIMIT_SECONDS: 180,
     MOVE_SPEED: 0.15,
     PLAYER_MAX_HP: 15,
     PLAYER_DAMAGE: 3,
@@ -250,26 +258,15 @@ class Enemy extends CharacterBase {
 
     applyTypeAppearance() {
         if (!this.mesh) return;
-        // 進行中の flashModelRed 復元をキャンセルし、リスポーン後の見た目が上書きされないようにする
+        // エリート/通常で色を変えず、GLTF本来の見た目を維持する。
+        // 進行中の flashModelRed 復元のみキャンセルして見た目の上書きを防ぐ。
         this.mesh.userData._flashGen = (this.mesh.userData._flashGen || 0) + 1;
         this.mesh.traverse((child) => {
-            if (child.isMesh && child.material) {
-                const materials = Array.isArray(child.material) ? child.material : [child.material];
-                materials.forEach((mat) => {
-                    // 前回のフラッシュ退避データはリセット
-                    if (mat.userData && mat.userData._preFlashState) delete mat.userData._preFlashState;
-                    if (this.type === 'elite') {
-                       
-                        if (mat.color) mat.color.setHex(0x111111);
-                        if (mat.emissive) mat.emissive.setHex(0x664400);
-                    } else {
-                        // 通常敵はデフォルト色
-                        if (mat.color) mat.color.setHex(0xffffff);
-                        if (mat.emissive) mat.emissive.setHex(0x000000);
-                    }
-                    if (typeof mat.emissiveIntensity === 'number') mat.emissiveIntensity = 1.0;
-                });
-            }
+            if (!child.isMesh || !child.material) return;
+            const materials = Array.isArray(child.material) ? child.material : [child.material];
+            materials.forEach((mat) => {
+                if (mat.userData && mat.userData._preFlashState) delete mat.userData._preFlashState;
+            });
         });
     }
 
@@ -299,6 +296,8 @@ class MapManager {
         this.mapData = [];
         this.mapMeshes = [];
         this.itemMeshes = [];
+        this.obstacleTypes = [];
+        this.breakableMap = [];
         this.flashingTrapTiles = new Set();
         this.explosions = [];
         this.goalMesh = null;
@@ -309,6 +308,8 @@ class MapManager {
         this.mapData = [];
         this.mapMeshes = [];
         this.itemMeshes = [];
+        this.obstacleTypes = [];
+        this.breakableMap = [];
         this.flashingTrapTiles.clear();
         this.explosions.forEach((exp) => {
             this.game.gameGroup.remove(exp.system);
@@ -605,6 +606,9 @@ class Game {
         this.enemyTurnId = 0;
         this.suppressEnemyAttackThisTurn = false;
         this.hasMovedOnce = false;
+        this.timeLeftSeconds = CONFIG.STAGE_TIME_LIMIT_SECONDS;
+        this.isPaused = false;
+        this.isStageClearing = false;
 
         this.enemies = [];
         this.player = null;
@@ -679,9 +683,404 @@ class Game {
     start() {
         this.initStage();
         this.setupGitInfo();
+        this.setupPauseControl();
         this.setupTouchControls();
         this.setupKeyboardControls();
         this.animate();
+    }
+
+    setupPauseControl() {
+        const pauseBtn = document.getElementById('pause-btn');
+        if (!pauseBtn) return;
+
+        pauseBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.togglePause();
+        });
+        this.updatePauseButton();
+    }
+
+    updatePauseButton() {
+        const pauseBtn = document.getElementById('pause-btn');
+        if (!pauseBtn) return;
+        pauseBtn.innerText = this.isPaused ? '再開' : 'ポーズ';
+    }
+
+    togglePause(forceState) {
+        if (this.isGameOverProcessing || this.isStageClearing) return;
+        const nextState = typeof forceState === 'boolean' ? forceState : !this.isPaused;
+        this.isPaused = nextState;
+
+        if (this.isPaused) {
+            this.joystickInput.active = false;
+            this.joystickInput.move = 0;
+            this.joystickInput.turn = 0;
+            this.stopJoystickRepeat();
+            if (this.upButtonPressedTimer) {
+                clearInterval(this.upButtonPressedTimer);
+                this.upButtonPressedTimer = null;
+            }
+        }
+
+        this.updatePauseButton();
+    }
+
+    isLegacyMapMode() {
+        return CONFIG.MAP_LAYOUT_MODE === 'legacy';
+    }
+
+    initMapArrays() {
+        const mapData = this.mapManager.mapData;
+        const mapMeshes = this.mapManager.mapMeshes;
+        const itemMeshes = this.mapManager.itemMeshes;
+        const obstacleTypes = this.mapManager.obstacleTypes;
+        const breakableMap = this.mapManager.breakableMap;
+
+        for (let x = 0; x < this.mapSize; x++) {
+            mapData[x] = [];
+            mapMeshes[x] = [];
+            itemMeshes[x] = [];
+            obstacleTypes[x] = [];
+            breakableMap[x] = [];
+            for (let z = 0; z < this.mapSize; z++) {
+                mapData[x][z] = 0;
+                mapMeshes[x][z] = null;
+                itemMeshes[x][z] = null;
+                obstacleTypes[x][z] = null;
+                breakableMap[x][z] = false;
+            }
+        }
+    }
+
+    isBreakableTile(x, z) {
+        const row = this.mapManager.breakableMap[x];
+        return !!(row && row[z]);
+    }
+
+    createDistanceField(startX, startZ) {
+        const mapData = this.mapManager.mapData;
+        const dist = Array.from({ length: this.mapSize }, () => Array(this.mapSize).fill(-1));
+        const queue = [{ x: startX, z: startZ }];
+        let head = 0;
+        dist[startX][startZ] = 0;
+
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        while (head < queue.length) {
+            const cur = queue[head++];
+            for (const [dx, dz] of dirs) {
+                const nx = cur.x + dx;
+                const nz = cur.z + dz;
+                if (nx < 0 || nz < 0 || nx >= this.mapSize || nz >= this.mapSize) continue;
+                if (dist[nx][nz] !== -1) continue;
+                if (mapData[nx][nz] === 1) continue;
+                dist[nx][nz] = dist[cur.x][cur.z] + 1;
+                queue.push({ x: nx, z: nz });
+            }
+        }
+        return dist;
+    }
+
+    collectReachableTiles(distField, minDist = 0) {
+        const tiles = [];
+        for (let x = 1; x < this.mapSize - 1; x++) {
+            for (let z = 1; z < this.mapSize - 1; z++) {
+                if (distField[x][z] >= minDist && this.mapManager.mapData[x][z] === 0) {
+                    tiles.push({ x, z, d: distField[x][z] });
+                }
+            }
+        }
+        return tiles;
+    }
+
+    countBlockedNeighbors(grid, x, z) {
+        let blocked = 0;
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                if (dx === 0 && dz === 0) continue;
+                const nx = x + dx;
+                const nz = z + dz;
+                if (nx <= 0 || nz <= 0 || nx >= this.mapSize - 1 || nz >= this.mapSize - 1) {
+                    blocked++;
+                } else if (grid[nx][nz] === 1) {
+                    blocked++;
+                }
+            }
+        }
+        return blocked;
+    }
+
+    generateLegacyLayout() {
+        const mapData = this.mapManager.mapData;
+        const breakableMap = this.mapManager.breakableMap;
+        for (let x = 0; x < this.mapSize; x++) {
+            for (let z = 0; z < this.mapSize; z++) {
+                if (x === 0 || x === this.mapSize - 1 || z === 0 || z === this.mapSize - 1) {
+                    mapData[x][z] = 1;
+                    breakableMap[x][z] = false;
+                } else if ((x === 1 && z === 1) || (x === this.goal.x && z === this.goal.z)) {
+                    mapData[x][z] = 0;
+                    breakableMap[x][z] = false;
+                } else {
+                    const rand = Math.random();
+                    if (rand < 0.18) {
+                        mapData[x][z] = 1;
+                        breakableMap[x][z] = true;
+                    } else if (rand < 0.23) {
+                        mapData[x][z] = 2;
+                        breakableMap[x][z] = true;
+                    } else if (rand < 0.28) {
+                        mapData[x][z] = 5;
+                        breakableMap[x][z] = false;
+                    } else {
+                        mapData[x][z] = 0;
+                        breakableMap[x][z] = false;
+                    }
+                }
+            }
+        }
+    }
+
+    generateMildMazeLayout() {
+        const mapData = this.mapManager.mapData;
+        const obstacleTypes = this.mapManager.obstacleTypes;
+        const breakableMap = this.mapManager.breakableMap;
+        const startX = 1;
+        const startZ = 1;
+        const minGoalDist = CONFIG.MILD_MAZE_GOAL_MIN_DISTANCE;
+        const maxGoalDist = Math.min(CONFIG.MILD_MAZE_GOAL_MAX_DISTANCE, (this.mapSize - 2) * 2);
+        const interiorMin = 1;
+        const interiorMax = this.mapSize - 2;
+        const dirs = [
+            { dx: 1, dz: 0 },
+            { dx: -1, dz: 0 },
+            { dx: 0, dz: 1 },
+            { dx: 0, dz: -1 }
+        ];
+        const key = (x, z) => `${x},${z}`;
+        const carved = new Set();
+        const mainPath = [];
+
+        const inInterior = (x, z) => x >= interiorMin && x <= interiorMax && z >= interiorMin && z <= interiorMax;
+        const isBlocked = (x, z) => mapData[x] && mapData[x][z] === 1;
+
+        const carve = (x, z, pushMain = false) => {
+            if (!inInterior(x, z)) return;
+            mapData[x][z] = 0;
+            obstacleTypes[x][z] = null;
+            breakableMap[x][z] = false;
+            const k = key(x, z);
+            if (!carved.has(k)) carved.add(k);
+            if (pushMain) mainPath.push({ x, z });
+        };
+
+        const blockedNeighborCount4 = (x, z) => {
+            let blocked = 0;
+            for (const { dx, dz } of dirs) {
+                const nx = x + dx;
+                const nz = z + dz;
+                if (!inInterior(nx, nz) || mapData[nx][nz] === 1) blocked++;
+            }
+            return blocked;
+        };
+
+        const shuffledDirs = () => {
+            const arr = dirs.slice();
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        };
+
+        for (let x = 0; x < this.mapSize; x++) {
+            for (let z = 0; z < this.mapSize; z++) {
+                const isBoundary = x === 0 || z === 0 || x === this.mapSize - 1 || z === this.mapSize - 1;
+                mapData[x][z] = 1;
+                obstacleTypes[x][z] = isBoundary ? 'sea' : 'rock';
+                breakableMap[x][z] = false;
+            }
+        }
+
+        const goalCandidates = [];
+        for (let x = interiorMin; x <= interiorMax; x++) {
+            for (let z = interiorMin; z <= interiorMax; z++) {
+                const m = Math.abs(x - startX) + Math.abs(z - startZ);
+                if (m >= minGoalDist && m <= maxGoalDist) goalCandidates.push({ x, z, m });
+            }
+        }
+        if (goalCandidates.length === 0) {
+            goalCandidates.push({ x: interiorMax, z: interiorMax, m: Math.abs(interiorMax - startX) + Math.abs(interiorMax - startZ) });
+        }
+        goalCandidates.sort((a, b) => b.m - a.m);
+        const poolSize = Math.max(1, Math.floor(goalCandidates.length * 0.35));
+        const pickedGoal = goalCandidates[Math.floor(Math.random() * poolSize)];
+        this.goal = { x: pickedGoal.x, z: pickedGoal.z };
+
+        carve(startX, startZ, true);
+        carve(startX + 1, startZ, true);
+        carve(startX, startZ + 1, true);
+
+        let cx = startX;
+        let cz = startZ;
+        let lastDir = { dx: 1, dz: 0 };
+        let guard = 0;
+        const maxGuard = this.mapSize * this.mapSize * 12;
+
+        while ((cx !== this.goal.x || cz !== this.goal.z) && guard < maxGuard) {
+            guard++;
+            const choices = [];
+            for (const d of dirs) {
+                const nx = cx + d.dx;
+                const nz = cz + d.dz;
+                if (!inInterior(nx, nz)) continue;
+                const before = Math.abs(this.goal.x - cx) + Math.abs(this.goal.z - cz);
+                const after = Math.abs(this.goal.x - nx) + Math.abs(this.goal.z - nz);
+                const improves = after < before ? 1 : 0;
+                const uncarved = isBlocked(nx, nz) ? 1 : 0;
+                const keepDir = (d.dx === lastDir.dx && d.dz === lastDir.dz) ? 1 : 0;
+                const score = improves * 5 + uncarved * 3 + keepDir * 2 + Math.random();
+                choices.push({ d, score });
+            }
+            if (choices.length === 0) break;
+
+            choices.sort((a, b) => b.score - a.score);
+            const pick = Math.random() < 0.72 ? choices[0] : choices[Math.floor(Math.random() * Math.min(3, choices.length))];
+            const runLen = 1 + Math.floor(Math.random() * 3);
+
+            for (let s = 0; s < runLen; s++) {
+                const nx = cx + pick.d.dx;
+                const nz = cz + pick.d.dz;
+                if (!inInterior(nx, nz)) break;
+                cx = nx;
+                cz = nz;
+                carve(cx, cz, true);
+                if (cx === this.goal.x && cz === this.goal.z) break;
+            }
+            lastDir = pick.d;
+        }
+
+        while (cx !== this.goal.x) {
+            cx += Math.sign(this.goal.x - cx);
+            carve(cx, cz, true);
+        }
+        while (cz !== this.goal.z) {
+            cz += Math.sign(this.goal.z - cz);
+            carve(cx, cz, true);
+        }
+
+        const branchBudget = Math.max(5, Math.floor(mainPath.length * 0.14));
+        for (let b = 0; b < branchBudget; b++) {
+            const pivotIdx = Math.floor(Math.random() * Math.max(1, mainPath.length - 6)) + 3;
+            const pivot = mainPath[Math.min(pivotIdx, mainPath.length - 1)];
+            if (!pivot) continue;
+
+            let branchDir = shuffledDirs().find(({ dx, dz }) => {
+                const tx = pivot.x + dx;
+                const tz = pivot.z + dz;
+                return inInterior(tx, tz) && isBlocked(tx, tz);
+            });
+            if (!branchDir) continue;
+
+            let bx = pivot.x;
+            let bz = pivot.z;
+            const branchLen = 2 + Math.floor(Math.random() * 5);
+
+            for (let i = 0; i < branchLen; i++) {
+                if (Math.random() < 0.18) {
+                    const turns = shuffledDirs().filter((d) => !(d.dx === -branchDir.dx && d.dz === -branchDir.dz));
+                    const candidate = turns.find(({ dx, dz }) => {
+                        const tx = bx + dx;
+                        const tz = bz + dz;
+                        return inInterior(tx, tz);
+                    });
+                    if (candidate) branchDir = candidate;
+                }
+
+                const nx = bx + branchDir.dx;
+                const nz = bz + branchDir.dz;
+                if (!inInterior(nx, nz)) break;
+                if (!isBlocked(nx, nz)) break;
+
+                carve(nx, nz, false);
+                bx = nx;
+                bz = nz;
+            }
+        }
+
+        const interiorCount = (this.mapSize - 2) * (this.mapSize - 2);
+        const targetPassable = Math.max(mainPath.length, Math.floor(interiorCount * (1 - CONFIG.MILD_MAZE_BLOCK_DENSITY)));
+        let widenGuard = 0;
+        const widenGuardMax = targetPassable * 50;
+
+        while (carved.size < targetPassable && widenGuard < widenGuardMax) {
+            widenGuard++;
+            const entries = Array.from(carved);
+            const picked = entries[Math.floor(Math.random() * entries.length)];
+            const [sx, sz] = picked.split(',').map(Number);
+
+            const candidates = shuffledDirs().map(({ dx, dz }) => ({ x: sx + dx, z: sz + dz }))
+                .filter(({ x, z }) => inInterior(x, z) && isBlocked(x, z));
+            if (candidates.length === 0) continue;
+
+            const chosen = candidates[0];
+            const around = blockedNeighborCount4(chosen.x, chosen.z);
+            if (around < 2) continue;
+
+            carve(chosen.x, chosen.z, false);
+
+            // 幅 2〜3 の通路を作るため、低確率で隣接セルも掘る
+            if (Math.random() < 0.32) {
+                const second = shuffledDirs().map(({ dx, dz }) => ({ x: chosen.x + dx, z: chosen.z + dz }))
+                    .find(({ x, z }) => inInterior(x, z) && isBlocked(x, z) && blockedNeighborCount4(x, z) >= 2);
+                if (second) carve(second.x, second.z, false);
+            }
+        }
+
+        mapData[this.goal.x][this.goal.z] = 0;
+        obstacleTypes[this.goal.x][this.goal.z] = null;
+        breakableMap[this.goal.x][this.goal.z] = false;
+
+        // 障害物タイプを割り当て（高密度、進入路は狭く維持）
+        for (let x = 1; x < this.mapSize - 1; x++) {
+            for (let z = 1; z < this.mapSize - 1; z++) {
+                if (mapData[x][z] !== 1) continue;
+                const roll = Math.random();
+                if (roll < 0.08) {
+                    obstacleTypes[x][z] = 'sea';
+                    breakableMap[x][z] = false;
+                } else if (roll < 0.56) {
+                    obstacleTypes[x][z] = 'rock';
+                    breakableMap[x][z] = false;
+                } else if (roll < 0.86) {
+                    obstacleTypes[x][z] = 'tree';
+                    breakableMap[x][z] = false;
+                } else if (roll < 0.94) {
+                    obstacleTypes[x][z] = 'breakable_barrel';
+                    breakableMap[x][z] = true;
+                } else {
+                    obstacleTypes[x][z] = 'breakable_bomb';
+                    breakableMap[x][z] = true;
+                }
+            }
+        }
+
+        let finalDistanceField = this.createDistanceField(startX, startZ);
+        if (finalDistanceField[this.goal.x][this.goal.z] < 0) {
+            // 万一の到達不能を防ぐ保険
+            let fx = startX;
+            let fz = startZ;
+            while (fx !== this.goal.x) {
+                fx += Math.sign(this.goal.x - fx);
+                carve(fx, fz, false);
+            }
+            while (fz !== this.goal.z) {
+                fz += Math.sign(this.goal.z - fz);
+                carve(fx, fz, false);
+            }
+            finalDistanceField = this.createDistanceField(startX, startZ);
+        }
+
+        return finalDistanceField;
     }
 
     initStage() {
@@ -692,8 +1091,14 @@ class Game {
         this.enemies = [];
         this.mapManager.clear();
 
-        this.mapSize = CONFIG.INITIAL_MAP_SIZE + (this.stage - 1) * CONFIG.MAP_SIZE_INCREMENT;
+        this.mapSize = this.isLegacyMapMode()
+            ? (CONFIG.INITIAL_MAP_SIZE + (this.stage - 1) * CONFIG.MAP_SIZE_INCREMENT)
+            : CONFIG.MILD_MAZE_MAP_SIZE;
         this.goal = { x: this.mapSize - 2, z: this.mapSize - 2 };
+        this.timeLeftSeconds = CONFIG.STAGE_TIME_LIMIT_SECONDS;
+        this.isStageClearing = false;
+        this.isPaused = false;
+        this.updatePauseButton();
 
         document.getElementById('stage-display').innerText = `STAGE: ${this.stage}`;
         this.updateUI();
@@ -703,38 +1108,20 @@ class Game {
         this.hasMovedOnce = false;
 
         // 移動・衝突判定に使う論理マップ配列を構築
+        this.initMapArrays();
         const mapData = this.mapManager.mapData;
-        const mapMeshes = this.mapManager.mapMeshes;
-        const itemMeshes = this.mapManager.itemMeshes;
 
-        for (let x = 0; x < this.mapSize; x++) {
-            mapData[x] = [];
-            mapMeshes[x] = [];
-            itemMeshes[x] = [];
-            for (let z = 0; z < this.mapSize; z++) {
-                if (x === 0 || x === this.mapSize - 1 || z === 0 || z === this.mapSize - 1) {
-                    mapData[x][z] = 1; // 外周の壁
-                } else if ((x === 1 && z === 1) || (x === this.goal.x && z === this.goal.z)) {
-                    mapData[x][z] = 0; // 開始地点とゴールは通行可
-                } else {
-                    const rand = Math.random();
-                    if (rand < 0.18) mapData[x][z] = 1;      // 壊せる壁
-                    else if (rand < 0.23) mapData[x][z] = 2; // 罠タイル
-                    else if (rand < 0.28) mapData[x][z] = 5; // 氷タイル
-                    else mapData[x][z] = 0;
-                }
-            }
+        let distanceField = null;
+        if (this.isLegacyMapMode()) {
+            this.generateLegacyLayout();
+            distanceField = this.createDistanceField(1, 1);
+        } else {
+            distanceField = this.generateMildMazeLayout();
         }
 
         // ステージごとにリンゴを1つ配置
-        const itemCandidates = [];
-        for (let x = 1; x < this.mapSize - 1; x++) {
-            for (let z = 1; z < this.mapSize - 1; z++) {
-                if (mapData[x][z] === 0 && !(x === 1 && z === 1) && !(x === this.goal.x && z === this.goal.z)) {
-                    itemCandidates.push({ x, z });
-                }
-            }
-        }
+        const itemCandidates = this.collectReachableTiles(distanceField, 4)
+            .filter((p) => !(p.x === 1 && p.z === 1) && !(p.x === this.goal.x && p.z === this.goal.z));
         if (itemCandidates.length > 0) {
             const itemPos = itemCandidates[Math.floor(Math.random() * itemCandidates.length)];
             mapData[itemPos.x][itemPos.z] = 3;
@@ -742,12 +1129,21 @@ class Game {
 
         // ステージ用の敵を生成
         const enemyCount = 3 + Math.floor(this.stage * 1.2);
+        const spawnCandidates = this.collectReachableTiles(distanceField, 6)
+            .filter((p) => !(p.x === 1 && p.z === 1) && !(p.x === this.goal.x && p.z === this.goal.z));
         for (let i = 0; i < enemyCount; i++) {
             let rx, rz;
-            do {
-                rx = Math.floor(Math.random() * (this.mapSize - 2)) + 1;
-                rz = Math.floor(Math.random() * (this.mapSize - 2)) + 1;
-            } while (mapData[rx][rz] !== 0 || (rx === 1 && rz === 1) || (rx === this.goal.x && rz === this.goal.z));
+            if (spawnCandidates.length > 0) {
+                const idx = Math.floor(Math.random() * spawnCandidates.length);
+                const picked = spawnCandidates.splice(idx, 1)[0];
+                rx = picked.x;
+                rz = picked.z;
+            } else {
+                do {
+                    rx = Math.floor(Math.random() * (this.mapSize - 2)) + 1;
+                    rz = Math.floor(Math.random() * (this.mapSize - 2)) + 1;
+                } while (mapData[rx][rz] !== 0 || (rx === 1 && rz === 1) || (rx === this.goal.x && rz === this.goal.z));
+            }
 
             // エリート出現率はステージで少し上昇
             const isElite = Math.random() < 0.15 + (this.stage * 0.02);
@@ -775,8 +1171,8 @@ class Game {
 
         const trapPlacements = [];
         const attackableBlockPlacements = [];
-        const boundaryRockPlacements = [];
-        const boundaryPalmPlacements = [];
+        const rockPlacements = [];
+        const treePlacements = [];
 
         const mapData = this.mapManager.mapData;
         const mapMeshes = this.mapManager.mapMeshes;
@@ -784,34 +1180,54 @@ class Game {
 
         for (let x = 0; x < this.mapSize; x++) {
             for (let z = 0; z < this.mapSize; z++) {
-               
+                const isSeaCell = mapData[x][z] === 1 && this.mapManager.obstacleTypes[x][z] === 'sea';
+
+                // 海表現: 緑床を敷かず、水面を見せる
                 let currentTileMat = tileMat;
                 if (mapData[x][z] === 5) {
                     currentTileMat = iceMat;
                 }
-                const tile = new THREE.Mesh(tileGeo, currentTileMat);
-                tile.position.set(x, -0.1, z);
-                tile.receiveShadow = true;
-                this.gameGroup.add(tile);
+                if (!isSeaCell) {
+                    const tile = new THREE.Mesh(tileGeo, currentTileMat);
+                    tile.position.set(x, -0.1, z);
+                    tile.receiveShadow = true;
+                    this.gameGroup.add(tile);
+                }
 
                 if (mapData[x][z] === 1) {
-                    const wall = new THREE.Mesh(wallGeo, wallMat);
-                    wall.position.set(x, 0.45, z);
-                    wall.castShadow = true;
-                    wall.receiveShadow = true;
-                    this.gameGroup.add(wall);
+                    if (!isSeaCell) {
+                        const wall = new THREE.Mesh(wallGeo, wallMat);
+                        wall.position.set(x, 0.45, z);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        this.gameGroup.add(wall);
 
-                    const isBoundary = (x === 0 || z === 0 || x === this.mapSize - 1 || z === this.mapSize - 1);
-                    if (isBoundary) {
                         Utils.markAsPlayerOccluder(wall);
-                        if (Math.random() < 0.35) {
-                            boundaryPalmPlacements.push({ x, z, variant: 1 + Math.floor(Math.random() * 3), fallback: wall });
-                        } else {
-                            boundaryRockPlacements.push({ x, z, variant: 1 + Math.floor(Math.random() * 5), fallback: wall });
-                        }
-                    } else {
                         mapMeshes[x][z] = wall;
-                        attackableBlockPlacements.push({ x, z, fallback: wall });
+
+                        if (this.isLegacyMapMode()) {
+                            const isBoundary = (x === 0 || z === 0 || x === this.mapSize - 1 || z === this.mapSize - 1);
+                            if (isBoundary) {
+                                if (Math.random() < 0.35) {
+                                    treePlacements.push({ x, z, variant: 1 + Math.floor(Math.random() * 3), fallback: wall });
+                                } else {
+                                    rockPlacements.push({ x, z, variant: 1 + Math.floor(Math.random() * 5), fallback: wall });
+                                }
+                            } else {
+                                attackableBlockPlacements.push({ x, z, fallback: wall });
+                            }
+                        } else {
+                            const kind = this.mapManager.obstacleTypes[x][z];
+                            if (kind === 'breakable_barrel') {
+                                attackableBlockPlacements.push({ x, z, fallback: wall });
+                            } else if (kind === 'breakable_bomb') {
+                                trapPlacements.push({ x, z, fallback: wall });
+                            } else if (kind === 'tree') {
+                                treePlacements.push({ x, z, variant: 1 + Math.floor(Math.random() * 3), fallback: wall });
+                            } else {
+                                rockPlacements.push({ x, z, variant: 1 + Math.floor(Math.random() * 5), fallback: wall });
+                            }
+                        }
                     }
                 } else if (mapData[x][z] === 2) {
                     const trap = new THREE.Mesh(trapGeo, trapMat);
@@ -906,8 +1322,8 @@ class Game {
         this.pendingReplacements = {
             traps: trapPlacements,
             blocks: attackableBlockPlacements,
-            rocks: boundaryRockPlacements,
-            palms: boundaryPalmPlacements
+            rocks: rockPlacements,
+            palms: treePlacements
         };
     }
 
@@ -1031,10 +1447,10 @@ class Game {
         }, undefined, (err) => console.error('Failed to load Characters_Anne:', err));
 
        
-        this.gltfLoader.load('../models/Characters_Skeleton.gltf', (gltf) => {
+        const applyEnemyModel = (enemyList, gltf) => {
             const baseModel = Utils.prepareLoadedModel(gltf.scene, { scale: 0.7, y: 0, rotationY: Math.PI / 2 });
 
-            this.enemies.forEach((enemy) => {
+            enemyList.forEach((enemy) => {
                 let enemyModel;
                 if (typeof THREE !== 'undefined' && THREE.SkeletonUtils && THREE.SkeletonUtils.clone) {
                     enemyModel = THREE.SkeletonUtils.clone(baseModel);
@@ -1043,7 +1459,6 @@ class Game {
                     enemyModel = baseModel.clone();
                 }
 
-               
                 Utils.cloneObjectMaterials(enemyModel);
 
                 enemyModel.position.set(enemy.x, 0, enemy.z);
@@ -1057,18 +1472,33 @@ class Game {
                 enemy.mesh = enemyModel;
                 this.gameGroup.add(enemyModel);
 
-               
                 enemy.applyTypeAppearance();
 
                 if (gltf.animations && gltf.animations.length > 0) {
                     enemy.mixer = new THREE.AnimationMixer(enemyModel);
+                    enemy.animations = {};
                     gltf.animations.forEach((clip) => {
                         enemy.animations[clip.name] = enemy.mixer.clipAction(clip);
                     });
                     enemy.playAnimation('Idle');
                 }
             });
-        }, undefined, (err) => console.error('Failed to load Characters_Skeleton:', err));
+        };
+
+        const normalEnemies = this.enemies.filter((enemy) => enemy.type !== 'elite');
+        const eliteEnemies = this.enemies.filter((enemy) => enemy.type === 'elite');
+
+        if (normalEnemies.length > 0) {
+            this.gltfLoader.load('../models/Characters_Skeleton.gltf', (gltf) => {
+                applyEnemyModel(normalEnemies, gltf);
+            }, undefined, (err) => console.error('Failed to load Characters_Skeleton:', err));
+        }
+
+        if (eliteEnemies.length > 0) {
+            this.gltfLoader.load('../models/Characters_Sharky.gltf', (gltf) => {
+                applyEnemyModel(eliteEnemies, gltf);
+            }, undefined, (err) => console.error('Failed to load Characters_Sharky:', err));
+        }
     }
 
     // --- UI状態とHUD更新 ---
@@ -1079,6 +1509,14 @@ class Game {
 
         const scoreText = document.getElementById('score-text');
         if (scoreText) scoreText.innerText = `${this.score}`;
+
+        const timeDisplay = document.getElementById('time-display');
+        if (timeDisplay) {
+            const safeTime = Math.max(0, Math.ceil(this.timeLeftSeconds));
+            const minutes = Math.floor(safeTime / 60);
+            const seconds = safeTime % 60;
+            timeDisplay.innerText = `${minutes}:${String(seconds).padStart(2, '0')}`;
+        }
     }
 
     addScore(points) {
@@ -1100,6 +1538,9 @@ class Game {
     handleGameOver(message) {
         if (this.isGameOverProcessing) return;
         this.isGameOverProcessing = true;
+        this.isPaused = false;
+        this.isStageClearing = false;
+        this.updatePauseButton();
 
         const panel = document.getElementById('gameover-score');
         const value = document.getElementById('gameover-score-value');
@@ -1124,6 +1565,7 @@ class Game {
     // --- プレイヤー行動とターン進行 ---
     executeGridMove(moveStep) {
     // 移動中・攻撃中・死亡時は入力を受け付けない
+        if (this.isPaused || this.isStageClearing) return;
         if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         const nextX = this.player.x + this.player.dirX * moveStep;
@@ -1161,6 +1603,7 @@ class Game {
 
     executeJump() {
         // ジャンプは着地点が有効な場合に実行（目の前の障害物は跳躍で飛び越える）
+        if (this.isPaused || this.isStageClearing) return;
         if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         const landX = this.player.x + this.player.dirX * 2;
@@ -1198,6 +1641,7 @@ class Game {
     }
 
     executeAttack() {
+        if (this.isPaused || this.isStageClearing) return;
         if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         const targetX = this.player.x + this.player.dirX;
@@ -1276,8 +1720,12 @@ class Game {
         const mapData = this.mapManager.mapData;
         const mapMeshes = this.mapManager.mapMeshes;
 
-        // 壊せる壁s/traps can drop items.
-        if (mapData[targetX] && (mapData[targetX][targetZ] === 1 || mapData[targetX][targetZ] === 2)) {
+        // breakableMap で管理された障害物（樽/爆弾）だけ破壊可能。
+        const isBreakableObstacle = mapData[targetX]
+            && ((mapData[targetX][targetZ] === 1 && this.isBreakableTile(targetX, targetZ))
+                || mapData[targetX][targetZ] === 2);
+
+        if (isBreakableObstacle) {
             if (targetX > 0 && targetX < this.mapSize - 1 && targetZ > 0 && targetZ < this.mapSize - 1) {
                 const obstacle = mapMeshes[targetX][targetZ];
                 if (obstacle) {
@@ -1292,6 +1740,8 @@ class Game {
                             targetObstacle.getWorldPosition(pos);
                             this.gameGroup.remove(targetObstacle);
                             mapMeshes[targetX][targetZ] = null;
+                            this.mapManager.breakableMap[targetX][targetZ] = false;
+                            this.mapManager.obstacleTypes[targetX][targetZ] = null;
                             
                             // 障害物ドロップテーブルを抽選
                             // 仕様：回復アイテム（リンゴ）は 1 フィールドにつき 1 個のみ出現
@@ -1326,6 +1776,7 @@ class Game {
 
     // --- 敵行動とAI ---
     moveEnemies() {
+        if (this.isPaused || this.isStageClearing) return;
         this.enemyTurnId++;
         const currentTurn = this.enemyTurnId;
         const suppress = this.suppressEnemyAttackThisTurn;
@@ -1740,6 +2191,9 @@ class Game {
 
         // ゴール到達
         if (this.player.x === this.goal.x && this.player.z === this.goal.z) {
+            this.isStageClearing = true;
+            this.isPaused = false;
+            this.updatePauseButton();
             alert(`Stage ${this.stage} cleared. Advancing to next stage.`);
             this.stage++;
             this.player.heal(CONFIG.HEAL_AMOUNT);
@@ -1755,6 +2209,12 @@ class Game {
     // --- キーボード・タッチ・ジョイスティック入力 ---
     setupKeyboardControls() {
         window.addEventListener('keydown', (e) => {
+            if (e.key === 'p' || e.key === 'P') {
+                this.togglePause();
+                return;
+            }
+
+            if (this.isPaused || this.isStageClearing) return;
             if (this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
             this.removeStartUI();
 
@@ -1793,7 +2253,7 @@ class Game {
 
         if (!joystickZone) return;
 
-        const canInput = () => !this.player.isMoving && !this.player.isAttacking && this.player.hp > 0;
+        const canInput = () => !this.isPaused && !this.isStageClearing && !this.player.isMoving && !this.player.isAttacking && this.player.hp > 0;
 
         const bindAction = (btn, action) => {
             if (!btn) return;
@@ -1909,6 +2369,7 @@ class Game {
     }
 
     applyJoystickInput() {
+        if (this.isPaused || this.isStageClearing) return;
         if (!this.joystickInput.active || this.player.isMoving || this.player.isAttacking || this.player.hp <= 0) return;
 
         if (this.joystickInput.turn !== 0) {
@@ -2020,6 +2481,22 @@ class Game {
         this.updateOverlayVisibility();
 
         const delta = this.playerClock.getDelta();
+
+        if (this.isPaused) {
+            this.renderer.render(this.scene, this.camera);
+            return;
+        }
+
+        if (!this.isGameOverProcessing && !this.isStageClearing && this.player.hp > 0) {
+            this.timeLeftSeconds -= delta;
+            if (this.timeLeftSeconds <= 0) {
+                this.timeLeftSeconds = 0;
+                this.updateUI();
+                this.handleGameOver('時間切れ…');
+                return;
+            }
+            this.updateUI();
+        }
 
         // プレイヤーのアニメ更新と移動補間
         this.player.updateAnimation(delta);

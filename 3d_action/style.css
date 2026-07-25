@@ -49,6 +49,12 @@ body {
     color: #ffcc00;
 }
 
+#time-display {
+    font-weight: bold;
+    color: #9fe3ff;
+    font-variant-numeric: tabular-nums;
+}
+
 #commit-info {
     position: fixed;
     top: 10px;
@@ -68,6 +74,7 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
 }
 
 .hp-bar-bg {
@@ -95,6 +102,11 @@ body {
     color: #ffdf7a;
 }
 
+.time-label {
+    margin-left: 8px;
+    color: #9fe3ff;
+}
+
 #score-text {
     min-width: 42px;
     text-align: right;
@@ -102,6 +114,21 @@ body {
     font-weight: bold;
     color: #ffe08a;
     font-variant-numeric: tabular-nums;
+}
+
+#pause-btn {
+    margin-left: 8px;
+    padding: 4px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 6px;
+    background: rgba(20, 40, 64, 0.85);
+    color: #dff1ff;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+#pause-btn:active {
+    transform: translateY(1px);
 }
 
 #gameover-score {
