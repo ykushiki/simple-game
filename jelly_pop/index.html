@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ぷよぷよ Jelly Pop</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+        body {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            background: radial-gradient(circle at center, #1e1b4b 0%, #0f172a 100%);
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        @keyframes toastPop {
+            0% { transform: scale(0.5) rotate(-5deg); opacity: 0; }
+            50% { transform: scale(1.25) rotate(3deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .animate-toast {
+            animation: toastPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        /* 3d_action と同様のバーチャル十字キーUI */
+        #virtual-pad {
+            width: 100%;
+            max-width: 420px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            padding: 0 2px;
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+
+        .pad-cluster {
+            display: flex;
+            align-items: flex-end;
+            pointer-events: auto;
+        }
+
+        #move-cluster {
+            gap: 12px;
+        }
+
+        #dpad {
+            width: 110px;
+            height: 110px;
+            position: relative;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.24);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+
+        .dpad-btn {
+            position: absolute;
+            width: 34px;
+            height: 34px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.28);
+            color: #f8fafc;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .dpad-btn.up { top: 6px; left: 38px; }
+        .dpad-btn.left { left: 6px; top: 38px; }
+        .dpad-btn.right { right: 6px; top: 38px; }
+        .dpad-btn.down { bottom: 6px; left: 38px; }
+
+        #action-cluster {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+
+        .action-btn {
+            width: 62px;
+            height: 62px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: #f8fafc;
+            font-size: 20px;
+            font-weight: 800;
+        }
+
+        #btnRotateL {
+            background: rgba(147, 51, 234, 0.5);
+            border-color: rgba(192, 132, 252, 0.7);
+        }
+
+        #btnRotateR {
+            background: rgba(236, 72, 153, 0.5);
+            border-color: rgba(249, 168, 212, 0.7);
+        }
+
+        .dpad-btn:active,
+        .action-btn:active {
+            background: rgba(255, 255, 255, 0.72);
+            color: #0f172a;
+        }
+    </style>
+</head>
+<body class="w-full min-h-screen text-slate-100 flex flex-col items-center justify-between p-2 sm:p-4 overflow-x-hidden select-none">
+    <!-- Header Title -->
+    <header class="w-full max-w-xl text-center pt-2 pb-1">
+        <h1 class="text-2xl sm:text-3xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-300 to-cyan-300 drop-shadow-md">
+            ぷよぷよ JELLY POP
+        </h1>
+    </header>
+
+    <main class="w-full max-w-xl flex flex-col items-center justify-center my-auto gap-2 sm:gap-3 px-2">
+        <!-- Dashboard Top Info -->
+        <div class="w-full grid grid-cols-3 gap-2 text-center">
+            <div class="glass-panel p-2 rounded-2xl border border-slate-800 shadow-md">
+                <div class="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">SCORE</div>
+                <div id="scoreDisplay" class="text-lg sm:text-2xl font-black text-amber-400 tracking-tight">0</div>
+            </div>
+            <div class="glass-panel p-2 rounded-2xl border border-slate-800 shadow-md">
+                <div class="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">MAX CHAIN</div>
+                <div id="chainDisplay" class="text-lg sm:text-2xl font-black text-pink-400 tracking-tight">0</div>
+            </div>
+            <div class="glass-panel p-2 rounded-2xl border border-slate-800 shadow-md">
+                <div class="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">HIGH SCORE</div>
+                <div id="highScoreDisplay" class="text-lg sm:text-2xl font-black text-emerald-400 tracking-tight">0</div>
+            </div>
+        </div>
+
+        <!-- Playfield Area -->
+        <div class="relative w-full flex justify-center items-start gap-2 sm:gap-4">
+            <!-- Large Responsive Game Canvas Container -->
+            <div class="relative glass-panel p-2 sm:p-3 rounded-3xl border border-indigo-500/30 shadow-2xl shadow-indigo-950/60 flex-1 w-full max-w-[360px] sm:max-w-[420px]">
+                <canvas id="gameCanvas" width="360" height="720" class="w-full h-auto aspect-[1/2] rounded-2xl bg-slate-900/90 block border border-indigo-950 shadow-inner"></canvas>
+
+                <!-- Toast Overlay for Chains -->
+                <div id="chainToast" class="pointer-events-none absolute inset-0 flex items-center justify-center hidden z-10">
+                    <div id="chainToastText" class="animate-toast px-6 py-3 rounded-2xl bg-gradient-to-r from-pink-500 via-purple-600 to-indigo-600 border-2 border-white/40 text-white font-black text-2xl sm:text-3xl shadow-2xl shadow-pink-500/50 italic tracking-wider">
+                        1 CHAIN!
+                    </div>
+                </div>
+
+                <!-- Menu Overlay -->
+                <div id="menuOverlay" class="absolute inset-0 bg-slate-950/85 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-6 text-center z-20">
+                    <div class="w-16 h-16 rounded-3xl bg-gradient-to-tr from-pink-500 via-purple-500 to-indigo-500 flex items-center justify-center text-3xl shadow-xl shadow-pink-500/40 mb-3 animate-bounce">
+                        🍮
+                    </div>
+                    <h2 id="menuTitle" class="text-2xl font-black text-white mb-1">ぷよぷよ JELLY POP</h2>
+                    <p id="menuSubtitle" class="text-xs text-slate-400 font-semibold mb-6">4つ以上の同じ色をくっつけて消そう！</p>
+                    
+                    <button id="startBtn" class="w-full max-w-xs py-3.5 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 active:scale-95 text-white font-black text-base rounded-2xl shadow-lg shadow-pink-500/30 transition border border-white/20">
+                        GAME START
+                    </button>
+                </div>
+            </div>
+
+            <!-- Next Piece Sidebar -->
+            <div class="flex flex-col gap-2">
+                <div class="glass-panel p-2.5 sm:p-3 rounded-2xl border border-slate-800 flex flex-col items-center w-20 sm:w-24 shadow-md">
+                    <span class="text-[10px] sm:text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-1">NEXT</span>
+                    <canvas id="nextCanvas" width="70" height="130" class="bg-slate-900/60 rounded-xl border border-slate-800/80 w-full"></canvas>
+                </div>
+
+                <!-- Key Legend (Desktop) -->
+                <div class="hidden sm:flex glass-panel p-2.5 rounded-2xl border border-slate-800 flex-col text-[10px] text-slate-400 space-y-1 w-24">
+                    <div class="font-extrabold text-slate-300 text-center border-b border-slate-800 pb-1 mb-1">操作方法</div>
+                    <div>← → : 移動</div>
+                    <div>↓/SPACE: 高速</div>
+                    <div>Z / X : 回転</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- On-screen Virtual D-pad (3d_action style) -->
+        <div id="virtual-pad" class="sm:hidden mt-1">
+            <div class="pad-cluster" id="move-cluster">
+                <div id="dpad">
+                    <button class="dpad-btn up" id="btnUp" type="button">⟳</button>
+                    <button class="dpad-btn left" id="btnLeft" type="button">◀</button>
+                    <button class="dpad-btn right" id="btnRight" type="button">▶</button>
+                    <button class="dpad-btn down" id="btnDown" type="button">FAST</button>
+                </div>
+            </div>
+
+            <div class="pad-cluster" id="action-cluster">
+                <button class="action-btn" id="btnRotateL" type="button">⟲</button>
+                <button class="action-btn" id="btnRotateR" type="button">⟳</button>
+            </div>
+        </div>
+    </main>
+
+    <footer class="w-full max-w-xl text-center py-2 text-[10px] text-slate-500 font-medium">
+        ぷよぷよ JELLY POP &copy; Single-File HTML Game
+    </footer>
+
+    <script>
+        // -------------------------------------------------------------
+        // Web Audio Synthesizer Class (Declared BEFORE Instantiation)
+        // -------------------------------------------------------------
+        class AudioSynth {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) {
+                        this.ctx = new AudioCtx();
+                    }
+                }
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playTone(freq, type = 'sine', duration = 0.1, gainVal = 0.1) {
+                this.init();
+                if (!this.ctx) return;
+                try {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                    gain.gain.setValueAtTime(gainVal, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + duration);
+                } catch (e) {}
+            }
+
+            playMove() {
+                this.playTone(420, 'sine', 0.04, 0.05);
+            }
+
+            playRotate() {
+                this.playTone(620, 'triangle', 0.05, 0.08);
+            }
+
+            playDrop() {
+                this.playTone(220, 'sine', 0.08, 0.1);
+            }
+
+            playFastSwoosh() {
+                this.playTone(320, 'sawtooth', 0.03, 0.03);
+            }
+
+            playPop(chain = 1) {
+                const baseFreq = 440;
+                const freq = baseFreq * Math.pow(1.122, chain - 1);
+                this.playTone(freq, 'sine', 0.22, 0.2);
+                setTimeout(() => this.playTone(freq * 1.25, 'triangle', 0.15, 0.15), 50);
+            }
+
+            playStart() {
+                const notes = [261.63, 329.63, 392.00, 523.25];
+                notes.forEach((f, i) => {
+                    setTimeout(() => this.playTone(f, 'sine', 0.15, 0.12), i * 80);
+                });
+            }
+        }
+
+        // Instantiate Sound System after Class Declaration
+        const sound = new AudioSynth();
+
+        // -------------------------------------------------------------
+        // Game Constants & Global Grid Initialization
+        // -------------------------------------------------------------
+        const COLS = 6;
+        const ROWS = 12;
+        const HIDDEN_ROWS = 2;
+        const TOTAL_ROWS = ROWS + HIDDEN_ROWS;
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const nextCanvas = document.getElementById('nextCanvas');
+        const nextCtx = nextCanvas.getContext('2d');
+
+        const CELL_SIZE = 60; // Internal High-Resolution Canvas (360x720)
+
+        // Color definitions
+        const COLORS = [
+            { main: '#ff4b72', dark: '#d92b50', light: '#ff8da5', name: 'Red' },
+            { main: '#3b82f6', dark: '#1d4ed8', light: '#93c5fd', name: 'Blue' },
+            { main: '#10b981', dark: '#047857', light: '#6ee7b7', name: 'Green' },
+            { main: '#f59e0b', dark: '#b45309', light: '#fde047', name: 'Yellow' },
+            { main: '#a855f7', dark: '#7e22ce', light: '#d8b4fe', name: 'Purple' }
+        ];
+
+        const chainMultipliers = [0, 8, 16, 32, 64, 128, 256, 512];
+
+        // Safely Initialize 2D Grid Array immediately to prevent undefined access
+        let grid = Array(COLS).fill(null).map(() => Array(TOTAL_ROWS).fill(null));
+
+        let gameState = 'MENU'; // 'MENU', 'PLAYING', 'POPPING', 'FALLING', 'GAMEOVER'
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('jelly_pop_highscore') || '0', 10);
+        let currentChain = 0;
+        let maxChain = 0;
+
+        let activePair = null;
+        let nextPairs = [];
+        let particles = [];
+        let keyState = {};
+
+        // Lock Delay & Timer Tracking
+        let lastTime = 0;
+        let dropTimer = 0;
+        const NORMAL_DROP_INTERVAL = 0.65; // Normal falling speed in seconds
+        const FAST_DROP_INTERVAL = 0.04;   // Fast falling speed in seconds
+
+        // Particle Class for Burst Explosions
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 12;
+                this.vy = (Math.random() - 0.5) * 12 - 2;
+                this.color = color;
+                this.size = Math.random() * 8 + 4;
+                this.alpha = 1.0;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.4;
+                this.alpha -= 0.035;
+            }
+
+            draw(targetCtx) {
+                targetCtx.save();
+                targetCtx.globalAlpha = Math.max(0, this.alpha);
+                targetCtx.fillStyle = this.color.main;
+                targetCtx.beginPath();
+                targetCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                targetCtx.fill();
+                targetCtx.restore();
+            }
+        }
+
+        // Active Puyo Pair Class (Integer Grid Driven)
+        class ActivePair {
+            constructor(c1, c2) {
+                this.color1 = c1; // Axis
+                this.color2 = c2; // Child
+                this.axisCol = 2;
+                this.axisRow = 2;
+                this.rotation = 0; // 0: Top, 1: Right, 2: Bottom, 3: Left
+                this.visualY = 2;  // Smooth Interpolated Y
+                this.lockTimer = 0;
+                this.isGrounded = false;
+                this.squashX = 1.0;
+                this.squashY = 1.0;
+            }
+
+            getChildColRow() {
+                let dc = 0, dr = 0;
+                if (this.rotation === 0) dr = -1;
+                else if (this.rotation === 1) dc = 1;
+                else if (this.rotation === 2) dr = 1;
+                else if (this.rotation === 3) dc = -1;
+                return { col: this.axisCol + dc, row: this.axisRow + dr };
+            }
+
+            updateVisuals() {
+                this.visualY += (this.axisRow - this.visualY) * 0.3;
+            }
+        }
+
+        function canOccupy(col, row) {
+            if (col < 0 || col >= COLS || row < 0 || row >= TOTAL_ROWS) return false;
+            return grid[col][row] === null;
+        }
+
+        function isValidPosition(axisCol, axisRow, rotation) {
+            if (!canOccupy(axisCol, axisRow)) return false;
+
+            let dc = 0, dr = 0;
+            if (rotation === 0) dr = -1;
+            else if (rotation === 1) dc = 1;
+            else if (rotation === 2) dr = 1;
+            else if (rotation === 3) dc = -1;
+
+            const childCol = axisCol + dc;
+            const childRow = axisRow + dr;
+
+            return canOccupy(childCol, childRow);
+        }
+
+        function createRandomPair() {
+            return {
+                c1: Math.floor(Math.random() * COLORS.length),
+                c2: Math.floor(Math.random() * COLORS.length)
+            };
+        }
+
+        function resetGrid() {
+            grid = Array(COLS).fill(null).map(() => Array(TOTAL_ROWS).fill(null));
+        }
+
+        function spawnPair() {
+            if (nextPairs.length === 0) {
+                nextPairs.push(createRandomPair());
+                nextPairs.push(createRandomPair());
+            }
+
+            const current = nextPairs.shift();
+            nextPairs.push(createRandomPair());
+
+            activePair = new ActivePair(current.c1, current.c2);
+
+            // Game over check if spawn tile is blocked
+            if (!isValidPosition(activePair.axisCol, activePair.axisRow, activePair.rotation)) {
+                gameOver();
+            }
+
+            renderNextPreview();
+        }
+
+        function moveActive(dir) {
+            if (!activePair || gameState !== 'PLAYING') return;
+            const targetCol = activePair.axisCol + dir;
+            if (isValidPosition(targetCol, activePair.axisRow, activePair.rotation)) {
+                activePair.axisCol = targetCol;
+                activePair.squashX = 0.85;
+                activePair.squashY = 1.15;
+                sound.playMove();
+            }
+        }
+
+        function rotateActive(dir) { // dir: 1 = CW, -1 = CCW
+            if (!activePair || gameState !== 'PLAYING') return;
+            const newRot = (activePair.rotation + dir + 4) % 4;
+
+            if (isValidPosition(activePair.axisCol, activePair.axisRow, newRot)) {
+                activePair.rotation = newRot;
+                activePair.squashX = 1.15;
+                activePair.squashY = 0.85;
+                sound.playRotate();
+                return;
+            }
+
+            // Wallkick attempt
+            const kickDirs = [1, -1];
+            for (const kick of kickDirs) {
+                if (isValidPosition(activePair.axisCol + kick, activePair.axisRow, newRot)) {
+                    activePair.axisCol += kick;
+                    activePair.rotation = newRot;
+                    activePair.squashX = 1.15;
+                    activePair.squashY = 0.85;
+                    sound.playRotate();
+                    return;
+                }
+            }
+        }
+
+        function lockActivePair() {
+            if (!activePair) return;
+
+            const c1 = activePair.axisCol;
+            const r1 = activePair.axisRow;
+            const child = activePair.getChildColRow();
+            const c2 = child.col;
+            const r2 = child.row;
+
+            if (r1 >= 0 && r1 < TOTAL_ROWS) grid[c1][r1] = { color: activePair.color1, scaleX: 1.2, scaleY: 0.8 };
+            if (r2 >= 0 && r2 < TOTAL_ROWS) grid[c2][r2] = { color: activePair.color2, scaleX: 1.2, scaleY: 0.8 };
+
+            sound.playDrop();
+            activePair = null;
+
+            processGravityCascade();
+        }
+
+        function processGravityCascade() {
+            gameState = 'FALLING';
+            let moved = false;
+
+            for (let c = 0; c < COLS; c++) {
+                for (let r = TOTAL_ROWS - 2; r >= 0; r--) {
+                    if (grid[c][r] !== null && grid[c][r + 1] === null) {
+                        grid[c][r + 1] = grid[c][r];
+                        grid[c][r] = null;
+                        moved = true;
+                    }
+                }
+            }
+
+            if (moved) {
+                setTimeout(processGravityCascade, 80);
+            } else {
+                checkMatchingGroups();
+            }
+        }
+
+        function checkMatchingGroups() {
+            let visited = Array(COLS).fill(0).map(() => Array(TOTAL_ROWS).fill(false));
+            let puyosToPop = [];
+
+            for (let c = 0; c < COLS; c++) {
+                for (let r = 0; r < TOTAL_ROWS; r++) {
+                    if (grid[c][r] !== null && !visited[c][r] && !grid[c][r].isPopping) {
+                        const targetColor = grid[c][r].color;
+                        const group = [];
+                        const queue = [{ c, r }];
+                        visited[c][r] = true;
+
+                        while (queue.length > 0) {
+                            const curr = queue.shift();
+                            group.push(curr);
+
+                            const dirs = [
+                                { dc: -1, dr: 0 }, { dc: 1, dr: 0 },
+                                { dc: 0, dr: -1 }, { dc: 0, dr: 1 }
+                            ];
+
+                            for (const d of dirs) {
+                                const nc = curr.c + d.dc;
+                                const nr = curr.r + d.dr;
+
+                                if (nc >= 0 && nc < COLS && nr >= 0 && nr < TOTAL_ROWS) {
+                                    if (!visited[nc][nr] && grid[nc][nr] !== null && grid[nc][nr].color === targetColor) {
+                                        visited[nc][nr] = true;
+                                        queue.push({ c: nc, r: nr });
+                                    }
+                                }
+                            }
+                        }
+
+                        if (group.length >= 4) {
+                            puyosToPop = puyosToPop.concat(group);
+                        }
+                    }
+                }
+            }
+
+            if (puyosToPop.length > 0) {
+                gameState = 'POPPING';
+                currentChain++;
+                maxChain = Math.max(maxChain, currentChain);
+
+                sound.playPop(currentChain);
+                showChainToast(currentChain);
+
+                const popCount = puyosToPop.length;
+                const mult = chainMultipliers[Math.min(currentChain, chainMultipliers.length - 1)];
+                const deltaScore = popCount * 10 * Math.max(1, mult);
+                score += deltaScore;
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('jelly_pop_highscore', highScore.toString());
+                }
+                updateUI();
+
+                // Trigger pop swelling animation
+                puyosToPop.forEach(pos => {
+                    const cell = grid[pos.c][pos.r];
+                    if (cell) {
+                        cell.isPopping = true;
+                        cell.popProgress = 0;
+                        const px = pos.c * CELL_SIZE + CELL_SIZE / 2;
+                        const py = (pos.r - HIDDEN_ROWS) * CELL_SIZE + CELL_SIZE / 2;
+                        for (let i = 0; i < 12; i++) {
+                            particles.push(new Particle(px, py, COLORS[cell.color]));
+                        }
+                    }
+                });
+
+                // Clear puyos after smooth 380ms animation
+                setTimeout(() => {
+                    puyosToPop.forEach(pos => {
+                        grid[pos.c][pos.r] = null;
+                    });
+                    processGravityCascade();
+                }, 380);
+
+            } else {
+                currentChain = 0;
+                gameState = 'PLAYING';
+                updateUI();
+                spawnPair();
+            }
+        }
+
+        function drawPuyoBlob(targetCtx, x, y, radius, colorIdx, squashX = 1, squashY = 1, eyes = 'normal', poppingPhase = 0) {
+            const color = COLORS[colorIdx];
+            targetCtx.save();
+            
+            if (eyes === 'popping') {
+                const swell = 1 + Math.sin(poppingPhase * Math.PI) * 0.35;
+                const shakeX = (Math.random() - 0.5) * 6;
+                const shakeY = (Math.random() - 0.5) * 6;
+                targetCtx.translate(x + shakeX, y + shakeY);
+                targetCtx.scale(squashX * swell, squashY * swell);
+            } else {
+                targetCtx.translate(x, y);
+                targetCtx.scale(squashX, squashY);
+            }
+
+            // Body
+            targetCtx.beginPath();
+            targetCtx.fillStyle = color.main;
+            targetCtx.arc(0, 0, radius, 0, Math.PI * 2);
+            targetCtx.fill();
+
+            // Highlight
+            targetCtx.beginPath();
+            targetCtx.fillStyle = color.light;
+            targetCtx.arc(-radius * 0.3, -radius * 0.3, radius * 0.35, 0, Math.PI * 2);
+            targetCtx.fill();
+
+            // Shadow
+            targetCtx.beginPath();
+            targetCtx.fillStyle = color.dark;
+            targetCtx.arc(radius * 0.2, radius * 0.3, radius * 0.6, 0, Math.PI, false);
+            targetCtx.globalAlpha = 0.3;
+            targetCtx.fill();
+            targetCtx.globalAlpha = 1.0;
+
+            // Reactive Eyes
+            const eyeOffset = radius * 0.32;
+            const eyeY = -radius * 0.1;
+            const eyeRadius = radius * 0.22;
+
+            if (eyes === 'popping') {
+                targetCtx.fillStyle = '#ffffff';
+                targetCtx.font = `${radius * 0.9}px sans-serif`;
+                targetCtx.textAlign = 'center';
+                targetCtx.textBaseline = 'middle';
+                targetCtx.fillText('✨', 0, 0);
+            } else {
+                targetCtx.fillStyle = '#ffffff';
+                targetCtx.beginPath();
+                targetCtx.arc(-eyeOffset, eyeY, eyeRadius, 0, Math.PI * 2);
+                targetCtx.arc(eyeOffset, eyeY, eyeRadius, 0, Math.PI * 2);
+                targetCtx.fill();
+
+                targetCtx.fillStyle = '#0f172a';
+                targetCtx.beginPath();
+                targetCtx.arc(-eyeOffset + 1.5, eyeY, eyeRadius * 0.55, 0, Math.PI * 2);
+                targetCtx.arc(eyeOffset - 1.5, eyeY, eyeRadius * 0.55, 0, Math.PI * 2);
+                targetCtx.fill();
+
+                targetCtx.fillStyle = '#ffffff';
+                targetCtx.beginPath();
+                targetCtx.arc(-eyeOffset + 2.5, eyeY - 2, eyeRadius * 0.2, 0, Math.PI * 2);
+                targetCtx.arc(eyeOffset - 0.5, eyeY - 2, eyeRadius * 0.2, 0, Math.PI * 2);
+                targetCtx.fill();
+            }
+
+            targetCtx.restore();
+        }
+
+        // Draw Blob Connections (Fixing previous diagonal glitch)
+        function drawGridConnections() {
+            for (let c = 0; c < COLS; c++) {
+                for (let r = 0; r < TOTAL_ROWS; r++) {
+                    const cell = grid[c][r];
+                    if (!cell || cell.isPopping) continue;
+
+                    const x1 = c * CELL_SIZE + CELL_SIZE / 2;
+                    const y1 = (r - HIDDEN_ROWS) * CELL_SIZE + CELL_SIZE / 2;
+
+                    // Right Neighbor Connection
+                    if (c + 1 < COLS && grid[c + 1][r] && grid[c + 1][r].color === cell.color && !grid[c + 1][r].isPopping) {
+                        const x2 = (c + 1) * CELL_SIZE + CELL_SIZE / 2;
+                        ctx.strokeStyle = COLORS[cell.color].main;
+                        ctx.lineWidth = CELL_SIZE * 0.55;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y1);
+                        ctx.stroke();
+                    }
+                    // Bottom Neighbor Connection (Fix: lineTo uses x1, y2)
+                    if (r + 1 < TOTAL_ROWS && grid[c][r + 1] && grid[c][r + 1].color === cell.color && !grid[c][r + 1].isPopping) {
+                        const y2 = (r + 1 - HIDDEN_ROWS) * CELL_SIZE + CELL_SIZE / 2;
+                        ctx.strokeStyle = COLORS[cell.color].main;
+                        ctx.lineWidth = CELL_SIZE * 0.55;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x1, y2);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        function renderNextPreview() {
+            nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+            if (nextPairs.length === 0) return;
+
+            const next = nextPairs[0];
+            const cx = nextCanvas.width / 2;
+            const r = 20;
+
+            drawPuyoBlob(nextCtx, cx, 36, r, next.c2);
+            drawPuyoBlob(nextCtx, cx, 88, r, next.c1);
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Subtle Background Grid Lines
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            for (let c = 0; c <= COLS; c++) {
+                ctx.beginPath();
+                ctx.moveTo(c * CELL_SIZE, 0);
+                ctx.lineTo(c * CELL_SIZE, canvas.height);
+                ctx.stroke();
+            }
+            for (let r = 0; r <= ROWS; r++) {
+                ctx.beginPath();
+                ctx.moveTo(0, r * CELL_SIZE);
+                ctx.lineTo(canvas.width, r * CELL_SIZE);
+                ctx.stroke();
+            }
+
+            drawGridConnections();
+
+            // Render Grid Puyos
+            for (let c = 0; c < COLS; c++) {
+                for (let r = 0; r < TOTAL_ROWS; r++) {
+                    const cell = grid[c][r];
+                    if (cell) {
+                        cell.scaleX += (1.0 - cell.scaleX) * 0.2;
+                        cell.scaleY += (1.0 - cell.scaleY) * 0.2;
+
+                        if (cell.isPopping) {
+                            cell.popProgress = (cell.popProgress || 0) + 0.05;
+                        }
+
+                        const px = c * CELL_SIZE + CELL_SIZE / 2;
+                        const py = (r - HIDDEN_ROWS) * CELL_SIZE + CELL_SIZE / 2;
+                        const radius = CELL_SIZE * 0.44;
+
+                        drawPuyoBlob(
+                            ctx, px, py, radius, cell.color,
+                            cell.scaleX, cell.scaleY,
+                            cell.isPopping ? 'popping' : 'normal',
+                            cell.popProgress || 0
+                        );
+                    }
+                }
+            }
+
+            // Render Active Controlled Pair
+            if (activePair && gameState === 'PLAYING') {
+                activePair.squashX += (1.0 - activePair.squashX) * 0.2;
+                activePair.squashY += (1.0 - activePair.squashY) * 0.2;
+
+                const radius = CELL_SIZE * 0.44;
+
+                // Axis Puyo
+                const ax = activePair.axisCol * CELL_SIZE + CELL_SIZE / 2;
+                const ay = (activePair.visualY - HIDDEN_ROWS) * CELL_SIZE + CELL_SIZE / 2;
+                drawPuyoBlob(ctx, ax, ay, radius, activePair.color1, activePair.squashX, activePair.squashY);
+
+                // Child Puyo
+                const cPos = activePair.getChildColRow();
+                const rot = activePair.rotation;
+                let cyVisual = activePair.visualY;
+                if (rot === 0) cyVisual -= 1;
+                else if (rot === 2) cyVisual += 1;
+
+                const cx = cPos.col * CELL_SIZE + CELL_SIZE / 2;
+                const cy = (cyVisual - HIDDEN_ROWS) * CELL_SIZE + CELL_SIZE / 2;
+                drawPuyoBlob(ctx, cx, cy, radius, activePair.color2, activePair.squashX, activePair.squashY);
+            }
+
+            // Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw(ctx);
+                if (particles[i].alpha <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function gameLoop(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+            lastTime = timestamp;
+
+            if (gameState === 'PLAYING' && activePair) {
+                const isFastDrop = keyState['Space'] || keyState['ArrowDown'] || keyState['KeyS'] || keyState['TOUCH_FAST'];
+                const interval = isFastDrop ? FAST_DROP_INTERVAL : NORMAL_DROP_INTERVAL;
+
+                if (isFastDrop && Math.random() < 0.3) sound.playFastSwoosh();
+
+                dropTimer += dt;
+                activePair.updateVisuals();
+
+                // Check grounding
+                const canMoveDown = isValidPosition(activePair.axisCol, activePair.axisRow + 1, activePair.rotation);
+
+                if (!canMoveDown) {
+                    activePair.isGrounded = true;
+                    activePair.lockTimer += dt;
+                    if (activePair.lockTimer >= 0.35) { // 350ms Lock Delay
+                        lockActivePair();
+                        dropTimer = 0;
+                    }
+                } else {
+                    activePair.isGrounded = false;
+                    activePair.lockTimer = 0;
+
+                    if (dropTimer >= interval) {
+                        activePair.axisRow++;
+                        dropTimer = 0;
+                    }
+                }
+            }
+
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function showChainToast(chain) {
+            const toast = document.getElementById('chainToast');
+            const toastText = document.getElementById('chainToastText');
+            toastText.textContent = `${chain} CHAIN!`;
+            toast.classList.remove('hidden');
+            
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 800);
+        }
+
+        function updateUI() {
+            document.getElementById('scoreDisplay').textContent = score;
+            document.getElementById('chainDisplay').textContent = maxChain;
+            document.getElementById('highScoreDisplay').textContent = highScore;
+        }
+
+        function startGame() {
+            sound.init();
+            sound.playStart();
+
+            resetGrid();
+            score = 0;
+            currentChain = 0;
+            maxChain = 0;
+            nextPairs = [];
+            particles = [];
+            gameState = 'PLAYING';
+
+            updateUI();
+            document.getElementById('menuOverlay').classList.add('hidden');
+
+            spawnPair();
+        }
+
+        function gameOver() {
+            gameState = 'GAMEOVER';
+            document.getElementById('menuTitle').textContent = "GAME OVER";
+            document.getElementById('menuSubtitle').textContent = `FINAL SCORE: ${score}`;
+            document.getElementById('startBtn').textContent = "PLAY AGAIN";
+            document.getElementById('menuOverlay').classList.remove('hidden');
+        }
+
+        // -------------------------------------------------------------
+        // Keyboard and Touch Event Handler Wireups
+        // -------------------------------------------------------------
+        window.addEventListener('keydown', (e) => {
+            if (e.repeat && e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') return;
+            keyState[e.code] = true;
+
+            if (gameState === 'PLAYING') {
+                if (e.code === 'ArrowLeft' || e.code === 'KeyA') moveActive(-1);
+                if (e.code === 'ArrowRight' || e.code === 'KeyD') moveActive(1);
+                if (e.code === 'KeyX' || e.code === 'ArrowUp') rotateActive(1);
+                if (e.code === 'KeyZ') rotateActive(-1);
+            }
+
+            if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keyState[e.code] = false;
+        });
+
+        // Touch Controls
+        const bindTouch = (id, onStart, onEnd) => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                sound.init();
+                if (onStart) onStart();
+            }, { passive: false });
+
+            if (onEnd) {
+                btn.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    onEnd();
+                }, { passive: false });
+            }
+        };
+
+        bindTouch('btnLeft', () => moveActive(-1));
+        bindTouch('btnRight', () => moveActive(1));
+        bindTouch('btnUp', () => rotateActive(1));
+        bindTouch('btnRotateL', () => rotateActive(-1));
+        bindTouch('btnRotateR', () => rotateActive(1));
+        bindTouch('btnDown', () => keyState['TOUCH_FAST'] = true, () => keyState['TOUCH_FAST'] = false);
+
+        document.getElementById('startBtn').addEventListener('click', startGame);
+
+        // Window Load Bootstrapper
+        window.onload = () => {
+            updateUI();
+            requestAnimationFrame(gameLoop);
+        };
+    </script>
+</body>
+</html>
