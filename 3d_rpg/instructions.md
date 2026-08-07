@@ -14,7 +14,7 @@
 - [コード品質・命名規則](./instructions/coding-style-spec.md)
 
 ## 対象実装
-- [3d_dungeon_master_rpg.html](./3d_dungeon_master_rpg.html)
+- [index.html](./index.html)
 
 ## 運用
 - 仕様変更は先にこのインデックス、またはリンク先仕様を更新してから実装すること。
