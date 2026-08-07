@@ -1,0 +1,2086 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>3D ダンジョンマスター RPG - Dungeon of Shadows</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800;900&family=Shippori+Mincho:wght@600;800&display=swap');
+
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #050508;
+      font-family: 'Shippori Mincho', 'Cinzel', serif;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+
+    .font-cinzel {
+      font-family: 'Cinzel', serif;
+    }
+
+    /* Vignette & Retro Fantasy Border Overlay */
+    .vignette {
+      box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.95), inset 0 0 40px rgba(15, 10, 5, 0.8);
+    }
+
+    /* Custom Glassmorphism Dark HUD */
+    .hud-panel {
+      background: rgba(12, 10, 16, 0.78);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(180, 140, 70, 0.3);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+    }
+
+    .hud-btn {
+      background: linear-gradient(180deg, rgba(45, 35, 25, 0.8) 0%, rgba(20, 15, 10, 0.9) 100%);
+      border: 1px solid rgba(210, 160, 80, 0.4);
+      transition: all 0.15s ease-in-out;
+    }
+
+    .hud-btn:hover:not(:disabled) {
+      background: linear-gradient(180deg, rgba(85, 65, 40, 0.9) 0%, rgba(40, 30, 20, 0.95) 100%);
+      border-color: rgba(255, 200, 100, 0.8);
+      box-shadow: 0 0 12px rgba(230, 160, 50, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .hud-btn:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: 0 0 4px rgba(230, 160, 50, 0.2);
+    }
+
+    /* Health and Mana Bar Glows */
+    .hp-bar-fill {
+      background: linear-gradient(90deg, #880000 0%, #dd2222 50%, #ff4444 100%);
+      box-shadow: 0 0 8px rgba(220, 30, 30, 0.6);
+    }
+
+    .mp-bar-fill {
+      background: linear-gradient(90deg, #0044aa 0%, #2277ff 50%, #44aaff 100%);
+      box-shadow: 0 0 8px rgba(30, 120, 255, 0.6);
+    }
+
+    .xp-bar-fill {
+      background: linear-gradient(90deg, #886600 0%, #ddaa00 50%, #ffee44 100%);
+      box-shadow: 0 0 8px rgba(220, 170, 0, 0.6);
+    }
+
+    /* Animated damage slash screen flash */
+    @keyframes hitFlash {
+      0% { opacity: 0.6; }
+      100% { opacity: 0; }
+    }
+
+    .hit-overlay {
+      animation: hitFlash 0.3s ease-out forwards;
+    }
+
+    /* Custom Scrollbar for Logs */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(180, 140, 70, 0.4);
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body class="w-screen h-screen overflow-hidden text-amber-100 flex flex-col justify-between">
+
+  <!-- 3D WebGL Canvas Container -->
+  <div id="canvas-container" class="absolute inset-0 w-full h-full z-0"></div>
+
+  <!-- Screen Flash Effect Overlay -->
+  <div id="damage-flash" class="pointer-events-none absolute inset-0 z-10 bg-red-700/40 opacity-0 transition-opacity"></div>
+  <div id="heal-flash" class="pointer-events-none absolute inset-0 z-10 bg-emerald-500/20 opacity-0 transition-opacity"></div>
+
+  <!-- Vignette Overlay -->
+  <div class="pointer-events-none absolute inset-0 z-10 vignette"></div>
+
+  <!-- Top Bar HUD: Player Info & Level Status -->
+  <header class="relative z-20 w-full p-2 md:p-4 flex justify-between items-center bg-gradient-to-b from-black/90 via-black/50 to-transparent">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 md:w-12 md:h-12 rounded-lg border border-amber-600/50 bg-neutral-900 flex items-center justify-center shadow-lg shadow-amber-900/30">
+        <i data-lucide="shield" class="w-6 h-6 text-amber-500"></i>
+      </div>
+      <div>
+        <h1 class="font-cinzel text-lg md:text-xl font-bold text-amber-200 tracking-wider flex items-center gap-2">
+          DUNGEON OF SHADOWS <span id="floor-badge" class="text-xs px-2 py-0.5 rounded bg-amber-950/80 border border-amber-600/40 text-amber-300">B1F</span>
+        </h1>
+        <p class="text-xs text-amber-400/80 flex items-center gap-2">
+          <span>Lv.<span id="stat-level">1</span> 冒険者</span>
+          <span class="text-amber-500/50">•</span>
+          <span>GOLD: <span id="stat-gold" class="text-yellow-400 font-bold">0</span></span>
+        </p>
+      </div>
+    </div>
+
+    <!-- Status Bars -->
+    <div class="flex flex-col gap-1.5 w-36 md:w-52 text-xs">
+      <!-- HP -->
+      <div class="flex items-center justify-between text-red-200 font-sans text-[11px] font-bold">
+        <span class="flex items-center gap-1"><i data-lucide="heart" class="w-3 h-3 text-red-500 fill-red-500"></i> HP</span>
+        <span id="hp-text">100 / 100</span>
+      </div>
+      <div class="w-full bg-neutral-900/90 h-2.5 rounded-full border border-red-900/50 overflow-hidden p-0.5">
+        <div id="hp-bar" class="hp-bar-fill h-full rounded-full transition-all duration-300" style="width: 100%;"></div>
+      </div>
+
+      <!-- MP -->
+      <div class="flex items-center justify-between text-blue-200 font-sans text-[11px] font-bold">
+        <span class="flex items-center gap-1"><i data-lucide="zap" class="w-3 h-3 text-blue-400 fill-blue-400"></i> MP</span>
+        <span id="mp-text">50 / 50</span>
+      </div>
+      <div class="w-full bg-neutral-900/90 h-2 rounded-full border border-blue-900/50 overflow-hidden p-0.5">
+        <div id="mp-bar" class="mp-bar-fill h-full rounded-full transition-all duration-300" style="width: 100%;"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Middle Area: Center Crosshair & Target Bar -->
+  <main class="relative z-20 flex-1 flex flex-col justify-between p-3 md:p-6 pointer-events-none">
+    
+    <!-- Top Target Info Bar (When Enemy Nearby) -->
+    <div id="target-bar" class="self-center opacity-0 transition-opacity duration-300 hud-panel px-4 py-2 rounded-lg flex items-center gap-3 border-red-900/60 max-w-xs w-full">
+      <i data-lucide="skull" class="w-5 h-5 text-red-500 animate-pulse"></i>
+      <div class="flex-1">
+        <div class="flex justify-between text-xs text-red-200 font-bold mb-1">
+          <span id="target-name">ダークスライム</span>
+          <span id="target-hp-text">30/30</span>
+        </div>
+        <div class="w-full bg-neutral-950 h-2 rounded-full border border-red-800/40 overflow-hidden">
+          <div id="target-hp-bar" class="bg-red-600 h-full transition-all duration-200" style="width: 100%;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive Crosshair Prompt -->
+    <div class="self-center text-center">
+      <div class="w-3 h-3 rounded-full border-2 border-amber-300/40 bg-amber-400/20 mx-auto mb-2 animate-ping"></div>
+      <div id="interaction-prompt" class="hidden text-xs md:text-sm bg-black/80 text-amber-200 border border-amber-500/50 px-3 py-1.5 rounded-full shadow-lg backdrop-blur">
+        [Space / Tap] 調べる / 攻撃
+      </div>
+    </div>
+
+    <div></div>
+  </main>
+
+  <!-- Bottom HUD: Minimap, Action Buttons, D-Pad, Logs -->
+  <footer class="relative z-20 p-2 md:p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end bg-gradient-to-t from-black/95 via-black/80 to-transparent">
+    
+    <!-- Left Panel: Log & Keys -->
+    <div class="hud-panel p-2.5 rounded-xl flex flex-col h-32 md:h-36 justify-between">
+      <div class="flex items-center justify-between border-b border-amber-900/40 pb-1 mb-1">
+        <span class="text-xs font-bold text-amber-400 flex items-center gap-1">
+          <i data-lucide="scroll" class="w-3.5 h-3.5"></i> 探索記録
+        </span>
+        <div class="text-[11px] text-amber-300/80 flex items-center gap-1">
+          <i data-lucide="key" class="w-3 h-3 text-yellow-400"></i> 鍵: <span id="stat-keys" class="font-bold text-yellow-300">0</span>
+        </div>
+      </div>
+      <div id="game-log" class="text-[11px] leading-relaxed text-amber-200/90 overflow-y-auto space-y-1 flex-1 pr-1 font-sans">
+        <p class="text-amber-400/80">ダンジョン深層へ足を踏み入れた...</p>
+        <p class="text-neutral-400">移動: W/A/S/D または 画面キー</p>
+      </div>
+    </div>
+
+    <!-- Center Panel: Action Skill Buttons -->
+    <div class="hud-panel p-2.5 rounded-xl flex items-center justify-center gap-2 md:gap-3">
+      <button id="btn-attack" class="hud-btn flex-1 py-2.5 md:py-3 px-2 rounded-lg flex flex-col items-center justify-center gap-1 text-amber-200">
+        <i data-lucide="sword" class="w-5 h-5 md:w-6 md:h-6 text-red-400"></i>
+        <span class="text-xs font-bold">攻撃 [Space]</span>
+      </button>
+
+      <button id="btn-spell" class="hud-btn flex-1 py-2.5 md:py-3 px-2 rounded-lg flex flex-col items-center justify-center gap-1 text-amber-200">
+        <i data-lucide="flame" class="w-5 h-5 md:w-6 md:h-6 text-amber-400"></i>
+        <span class="text-xs font-bold">ファイア [1]</span>
+        <span class="text-[9px] text-blue-300 font-sans">MP 10</span>
+      </button>
+
+      <button id="btn-heal" class="hud-btn flex-1 py-2.5 md:py-3 px-2 rounded-lg flex flex-col items-center justify-center gap-1 text-amber-200">
+        <i data-lucide="sparkles" class="w-5 h-5 md:w-6 md:h-6 text-emerald-400"></i>
+        <span class="text-xs font-bold">ヒール [2]</span>
+        <span class="text-[9px] text-blue-300 font-sans">MP 15</span>
+      </button>
+    </div>
+
+    <!-- Right Panel: D-Pad Controls & Minimap -->
+    <div class="hud-panel p-2.5 rounded-xl flex items-center justify-between gap-3">
+      <!-- D-Pad for Mobile/Touch -->
+      <div class="grid grid-cols-3 gap-1 w-32 h-28">
+        <div></div>
+        <button id="btn-up" class="hud-btn rounded-md flex items-center justify-center">
+          <i data-lucide="chevron-up" class="w-5 h-5 text-amber-300"></i>
+        </button>
+        <div></div>
+
+        <button id="btn-left" class="hud-btn rounded-md flex items-center justify-center">
+          <i data-lucide="rotate-ccw" class="w-4 h-4 text-amber-300"></i>
+        </button>
+        <button id="btn-down" class="hud-btn rounded-md flex items-center justify-center">
+          <i data-lucide="chevron-down" class="w-5 h-5 text-amber-300"></i>
+        </button>
+        <button id="btn-right" class="hud-btn rounded-md flex items-center justify-center">
+          <i data-lucide="rotate-cw" class="w-4 h-4 text-amber-300"></i>
+        </button>
+      </div>
+
+      <!-- Minimap Container -->
+      <div class="relative w-24 h-24 md:w-28 md:h-28 rounded-lg border border-amber-700/50 overflow-hidden bg-black/90 shadow-inner flex-shrink-0">
+        <canvas id="minimap-canvas" width="112" height="112" class="w-full h-full block"></canvas>
+        <div class="absolute top-1 right-1 text-[9px] font-mono text-amber-400 bg-black/70 px-1 rounded">MAP</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Modal Overlays (Game Over / Floor Complete) -->
+  <div id="modal-overlay" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md hidden flex items-center justify-center p-4">
+    <div class="hud-panel max-w-md w-full p-6 rounded-2xl border-amber-600/60 text-center shadow-2xl">
+      <h2 id="modal-title" class="font-cinzel text-2xl font-bold text-amber-300 mb-2"></h2>
+      <p id="modal-desc" class="text-sm text-amber-100/90 mb-6 leading-relaxed font-sans"></p>
+      <button id="modal-btn" class="hud-btn w-full py-3 rounded-xl font-bold text-amber-200 text-sm tracking-wider shadow-lg">
+        再挑戦する
+      </button>
+    </div>
+  </div>
+
+  <script>
+    /* =========================================================================
+     *  3D DUNGEON MASTER RPG ENGINE
+     *  Includes: Procedural Canvas Textures, Web Audio Sound Synth, 
+     *  Grid-Smooth Dungeon Movement, Dynamic Dynamic Torch Lighting,
+     *  Monster AI & Combat System, Minimap Fog-Of-War.
+     * ========================================================================= */
+
+    // Initialize Lucide Icons
+    lucide.createIcons();
+
+    // -------------------------------------------------------------------------
+    // 1. WEB AUDIO SYNTHESIZER (No external audio files needed)
+    // -------------------------------------------------------------------------
+    class SoundEngine {
+      constructor() {
+        this.ctx = null;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      playFootstep() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(80, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.15);
+        
+        gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.15);
+      }
+
+      playAttack() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(80, now + 0.12);
+
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(now + 0.12);
+      }
+
+      playFireball() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        // White noise emulation for fire explosion
+        const bufferSize = this.ctx.sampleRate * 0.3;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(800, now);
+        filter.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+        noise.start();
+      }
+
+      playHeal() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(600, now + 0.3);
+
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(now + 0.3);
+      }
+
+      playHit() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(120, now);
+        osc.frequency.exponentialRampToValueAtTime(40, now + 0.2);
+
+        gain.gain.setValueAtTime(0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(now + 0.2);
+      }
+
+      playChest() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        [400, 520, 660, 880].forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+
+          gain.gain.setValueAtTime(0.2, now + idx * 0.08);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.08 + 0.15);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + idx * 0.08);
+          osc.stop(now + idx * 0.08 + 0.15);
+        });
+      }
+    }
+
+    const sound = new SoundEngine();
+
+    // -------------------------------------------------------------------------
+    // 2. PROCEDURAL TEXTURE GENERATOR (High Detail Realistic PBR Textures)
+    // -------------------------------------------------------------------------
+    function generateStoneWallTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      // Base stone gray
+      ctx.fillStyle = '#222226';
+      ctx.fillRect(0, 0, 512, 512);
+
+      // Brick pattern drawing
+      const rows = 8;
+      const rowH = 512 / rows;
+      ctx.strokeStyle = '#0d0d10';
+      ctx.lineWidth = 6;
+
+      for (let r = 0; r < rows; r++) {
+        const y = r * rowH;
+        const offset = (r % 2) * 64;
+        const cols = 4;
+        const colW = 512 / cols;
+
+        for (let c = -1; c <= cols; c++) {
+          const x = c * colW + offset;
+          
+          // Brick block gradient
+          const grad = ctx.createLinearGradient(x, y, x + colW, y + rowH);
+          const val = Math.floor(35 + Math.random() * 25);
+          grad.addColorStop(0, `rgb(${val+10}, ${val+10}, ${val+15})`);
+          grad.addColorStop(1, `rgb(${val-10}, ${val-10}, ${val-5})`);
+
+          ctx.fillStyle = grad;
+          ctx.fillRect(x + 3, y + 3, colW - 6, rowH - 6);
+
+          // Add stone texture noise
+          for (let i = 0; i < 150; i++) {
+            const nx = x + Math.random() * colW;
+            const ny = y + Math.random() * rowH;
+            const nSize = 1 + Math.random() * 3;
+            const alpha = Math.random() * 0.25;
+            ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
+            ctx.fillRect(nx, ny, nSize, nSize);
+          }
+
+          // Moss/Dirt patches at bottom edges
+          if (Math.random() < 0.4) {
+            ctx.fillStyle = 'rgba(25, 45, 20, 0.35)';
+            ctx.fillRect(x + 3, y + rowH - 12, colW - 6, 9);
+          }
+        }
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(512, y);
+        ctx.stroke();
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(2, 2);
+      return texture;
+    }
+
+    function generateStoneWallBumpTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = 'rgb(120,120,120)';
+      ctx.fillRect(0, 0, 512, 512);
+
+      const rows = 8;
+      const rowH = 512 / rows;
+      for (let r = 0; r < rows; r++) {
+        const y = r * rowH;
+        const offset = (r % 2) * 64;
+        const cols = 4;
+        const colW = 512 / cols;
+
+        for (let c = -1; c <= cols; c++) {
+          const x = c * colW + offset;
+          const shade = 105 + Math.floor(Math.random() * 30);
+          ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
+          ctx.fillRect(x + 6, y + 6, colW - 12, rowH - 12);
+
+          for (let i = 0; i < 180; i++) {
+            const nx = x + 8 + Math.random() * (colW - 16);
+            const ny = y + 8 + Math.random() * (rowH - 16);
+            const n = 95 + Math.floor(Math.random() * 70);
+            const s = 1 + Math.random() * 2;
+            ctx.fillStyle = `rgb(${n},${n},${n})`;
+            ctx.fillRect(nx, ny, s, s);
+          }
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    function generateStoneWallRoughnessTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = 'rgb(205,205,205)';
+      ctx.fillRect(0, 0, 512, 512);
+
+      for (let i = 0; i < 3000; i++) {
+        const v = 175 + Math.floor(Math.random() * 60);
+        ctx.fillStyle = `rgb(${v},${v},${v})`;
+        ctx.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 2, 1 + Math.random() * 2);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 2);
+      return tex;
+    }
+
+    function generateCobbleFloorTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#111114';
+      ctx.fillRect(0, 0, 512, 512);
+
+      const count = 12;
+      const size = 512 / count;
+
+      for (let x = 0; x < count; x++) {
+        for (let y = 0; y < count; y++) {
+          const px = x * size + (Math.random() * 4 - 2);
+          const py = y * size + (Math.random() * 4 - 2);
+
+          const shade = Math.floor(25 + Math.random() * 20);
+          ctx.fillStyle = `rgb(${shade}, ${shade + 2}, ${shade + 5})`;
+          ctx.beginPath();
+          ctx.roundRect(px + 2, py + 2, size - 4, size - 4, 6);
+          ctx.fill();
+
+          // Grit noise
+          for (let n = 0; n < 30; n++) {
+            ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.3)';
+            ctx.fillRect(px + Math.random() * size, py + Math.random() * size, 2, 2);
+          }
+        }
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(3, 3);
+      return texture;
+    }
+
+    function generateCobbleFloorBumpTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = 'rgb(110,110,110)';
+      ctx.fillRect(0, 0, 512, 512);
+
+      const count = 12;
+      const size = 512 / count;
+      for (let x = 0; x < count; x++) {
+        for (let y = 0; y < count; y++) {
+          const px = x * size + (Math.random() * 4 - 2);
+          const py = y * size + (Math.random() * 4 - 2);
+          const shade = 90 + Math.floor(Math.random() * 45);
+          ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
+          ctx.beginPath();
+          ctx.roundRect(px + 3, py + 3, size - 6, size - 6, 5);
+          ctx.fill();
+
+          for (let n = 0; n < 24; n++) {
+            const nv = 85 + Math.floor(Math.random() * 70);
+            ctx.fillStyle = `rgb(${nv},${nv},${nv})`;
+            ctx.fillRect(px + Math.random() * size, py + Math.random() * size, 1.5, 1.5);
+          }
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(3, 3);
+      return tex;
+    }
+
+    function generateCobbleFloorRoughnessTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = 'rgb(220,220,220)';
+      ctx.fillRect(0, 0, 512, 512);
+
+      for (let i = 0; i < 5200; i++) {
+        const v = 150 + Math.floor(Math.random() * 90);
+        ctx.fillStyle = `rgb(${v},${v},${v})`;
+        const s = 1 + Math.random() * 2.2;
+        ctx.fillRect(Math.random() * 512, Math.random() * 512, s, s);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(3, 3);
+      return tex;
+    }
+
+    function generateWoodDoorTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      // Wood dark brown
+      ctx.fillStyle = '#2d1d13';
+      ctx.fillRect(0, 0, 512, 512);
+
+      // Vertical Wood Planks
+      const planks = 6;
+      const pW = 512 / planks;
+
+      for (let i = 0; i < planks; i++) {
+        const x = i * pW;
+        ctx.fillStyle = (i % 2 === 0) ? '#382519' : '#2b1b11';
+        ctx.fillRect(x + 2, 0, pW - 4, 512);
+
+        // Wood grain lines
+        ctx.strokeStyle = 'rgba(15, 10, 5, 0.4)';
+        ctx.lineWidth = 1;
+        for (let g = 0; g < 15; g++) {
+          const gx = x + Math.random() * pW;
+          ctx.beginPath();
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx + (Math.random() * 10 - 5), 512);
+          ctx.stroke();
+        }
+      }
+
+      // Iron Studs & Border
+      ctx.fillStyle = '#1a1a1e';
+      ctx.fillRect(0, 0, 512, 16);
+      ctx.fillRect(0, 496, 512, 16);
+      ctx.fillRect(0, 248, 512, 16);
+
+      ctx.fillStyle = '#888890';
+      for (let i = 0; i < planks; i++) {
+        const x = i * pW + pW / 2;
+        ctx.beginPath();
+        ctx.arc(x, 8, 4, 0, Math.PI * 2);
+        ctx.arc(x, 256, 4, 0, Math.PI * 2);
+        ctx.arc(x, 504, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. GAME STATE & MAP GENERATOR
+    // -------------------------------------------------------------------------
+    const MAP_SIZE = 15;
+    const TILE_SIZE = 3; // 3D units per grid square
+
+    const TILE = {
+      EMPTY: 0,
+      WALL: 1,
+      DOOR: 2,
+      CHEST: 3,
+      STAIRS: 4,
+      MONSTER: 5
+    };
+
+    let gameState = {
+      floor: 1,
+      player: {
+        x: 1,
+        z: 1,
+        dir: 0, // 0: North (-Z), 1: East (+X), 2: South (+Z), 3: West (-X)
+        targetX: 1,
+        targetZ: 1,
+        targetAngle: 0,
+        hp: 100,
+        maxHp: 100,
+        mp: 50,
+        maxMp: 50,
+        level: 1,
+        exp: 0,
+        gold: 0,
+        keys: 0,
+        isMoving: false
+      },
+      map: [],
+      walls: [],
+      visited: [],
+      monsters: [],
+      chests: [],
+      doors: []
+    };
+
+    function inMap(x, z) {
+      return x >= 0 && x < MAP_SIZE && z >= 0 && z < MAP_SIZE;
+    }
+
+    function isInteriorCell(x, z) {
+      return x > 0 && x < MAP_SIZE - 1 && z > 0 && z < MAP_SIZE - 1;
+    }
+
+    function createWallGrid() {
+      return Array(MAP_SIZE).fill(0).map(() =>
+        Array(MAP_SIZE).fill(0).map(() => ({ n: true, e: true, s: true, w: true }))
+      );
+    }
+
+    function getOppositeSide(side) {
+      return ({ n: 's', e: 'w', s: 'n', w: 'e' })[side];
+    }
+
+    function getSideFromDir(dirIndex) {
+      return ['n', 'e', 's', 'w'][dirIndex];
+    }
+
+    function getCanonicalEdge(x, z, dirIndex) {
+      switch (dirIndex) {
+        case 0: return { x, z: z - 1, side: 's' };
+        case 1: return { x, z, side: 'e' };
+        case 2: return { x, z, side: 's' };
+        case 3: return { x: x - 1, z, side: 'e' };
+        default: return null;
+      }
+    }
+
+    function edgeKey(x, z, side) {
+      return `${x},${z},${side}`;
+    }
+
+    function setWallState(walls, x, z, side, isClosed) {
+      if (!inMap(x, z)) return;
+      walls[z][x][side] = isClosed;
+
+      const offsets = {
+        n: { dx: 0, dz: -1 },
+        e: { dx: 1, dz: 0 },
+        s: { dx: 0, dz: 1 },
+        w: { dx: -1, dz: 0 }
+      };
+      const offset = offsets[side];
+      const nx = x + offset.dx;
+      const nz = z + offset.dz;
+      if (inMap(nx, nz)) {
+        walls[nz][nx][getOppositeSide(side)] = isClosed;
+      }
+    }
+
+    function hasWallBetween(walls, x, z, dirIndex) {
+      if (!isInteriorCell(x, z)) return true;
+      return walls[z][x][getSideFromDir(dirIndex)];
+    }
+
+    function getDoorAtEdge(doors, x, z, dirIndex) {
+      const edge = getCanonicalEdge(x, z, dirIndex);
+      if (!edge) return null;
+      return doors.find((door) => door.x === edge.x && door.z === edge.z && door.side === edge.side) || null;
+    }
+
+    function canTraverseEdge(walls, doors, x, z, dirIndex) {
+      const nextX = x + DIR_VECTORS[dirIndex].x;
+      const nextZ = z + DIR_VECTORS[dirIndex].z;
+      if (!isInteriorCell(x, z) || !isInteriorCell(nextX, nextZ)) return false;
+      if (hasWallBetween(walls, x, z, dirIndex)) return false;
+      const door = getDoorAtEdge(doors, x, z, dirIndex);
+      return !(door && !door.open);
+    }
+
+    function isPassableForPathfinding(tile) {
+      return tile !== TILE.WALL && tile !== TILE.DOOR;
+    }
+
+    function collectReachableTiles(map, walls, doors, startX, startZ) {
+      const queue = [{ x: startX, z: startZ }];
+      const seen = new Set([`${startX},${startZ}`]);
+      const result = [];
+      const dirs = [1, 3, 2, 0];
+
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        result.push(cur);
+        for (const dirIndex of dirs) {
+          const nx = cur.x + DIR_VECTORS[dirIndex].x;
+          const nz = cur.z + DIR_VECTORS[dirIndex].z;
+          const key = `${nx},${nz}`;
+          if (!inMap(nx, nz) || seen.has(key)) continue;
+          if (!isPassableForPathfinding(map[nz][nx])) continue;
+          if (!canTraverseEdge(walls, doors, cur.x, cur.z, dirIndex)) continue;
+          seen.add(key);
+          queue.push({ x: nx, z: nz });
+        }
+      }
+
+      return result;
+    }
+
+    /**
+     * ダンジョン1フロア分の地図・壁・扉・配置物を生成して gameState に反映する。
+     * @returns {void}
+     */
+    function generateDungeonMap() {
+      const map = Array(MAP_SIZE).fill(0).map(() => Array(MAP_SIZE).fill(TILE.EMPTY));
+      const walls = createWallGrid();
+      const visited = Array(MAP_SIZE).fill(0).map(() => Array(MAP_SIZE).fill(false));
+      const carved = Array(MAP_SIZE).fill(0).map(() => Array(MAP_SIZE).fill(false));
+
+      function carve(x, z) {
+        carved[z][x] = true;
+
+        const dirs = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+
+        for (const dirIndex of dirs) {
+          const nx = x + DIR_VECTORS[dirIndex].x;
+          const nz = z + DIR_VECTORS[dirIndex].z;
+          if (isInteriorCell(nx, nz) && !carved[nz][nx]) {
+            setWallState(walls, x, z, getSideFromDir(dirIndex), false);
+            carve(nx, nz);
+          }
+        }
+      }
+
+      carve(1, 1);
+
+      let emptyTiles = [];
+      for (let z = 1; z < MAP_SIZE - 1; z++) {
+        for (let x = 1; x < MAP_SIZE - 1; x++) {
+          if (!(x === 1 && z === 1)) {
+            emptyTiles.push({ x, z });
+          }
+        }
+      }
+
+      emptyTiles.sort(() => Math.random() - 0.5);
+
+      const doorCandidates = [];
+      for (let z = 1; z < MAP_SIZE - 1; z++) {
+        for (let x = 1; x < MAP_SIZE - 1; x++) {
+          if (x < MAP_SIZE - 2 && !walls[z][x].e && !(x === 1 && z === 1) && !(x + 1 === 1 && z === 1)) {
+            doorCandidates.push({ x, z, side: 'e', axis: 'x' });
+          }
+          if (z < MAP_SIZE - 2 && !walls[z][x].s && !(x === 1 && z === 1) && !(x === 1 && z + 1 === 1)) {
+            doorCandidates.push({ x, z, side: 's', axis: 'z' });
+          }
+        }
+      }
+
+      let door = null;
+      if (doorCandidates.length > 0) {
+        const chosen = doorCandidates[Math.floor(Math.random() * doorCandidates.length)];
+        door = {
+          ...chosen,
+          id: edgeKey(chosen.x, chosen.z, chosen.side),
+          open: false
+        };
+      }
+
+      const isSameTile = (a, b) => a && b && a.x === b.x && a.z === b.z;
+      const remainingTiles = emptyTiles.slice();
+
+      const reachable = collectReachableTiles(map, walls, door ? [door] : [], 1, 1)
+        .filter((tile) => !(tile.x === 1 && tile.z === 1));
+      const reachableSet = new Set(reachable.map((tile) => `${tile.x},${tile.z}`));
+      const reachablePlaceables = remainingTiles.filter((tile) => reachableSet.has(`${tile.x},${tile.z}`));
+      const blockedPlaceables = remainingTiles.filter((tile) => !reachableSet.has(`${tile.x},${tile.z}`));
+
+      // Key chest is guaranteed to be reachable from the start.
+      let keyChestTile = null;
+      if (reachablePlaceables.length > 0) {
+        keyChestTile = reachablePlaceables.pop();
+      } else if (remainingTiles.length > 0) {
+        keyChestTile = remainingTiles.pop();
+      }
+
+      // Prefer placing stairs beyond the locked door if such region exists.
+      const blockedForStairs = blockedPlaceables.filter((tile) => !isSameTile(tile, keyChestTile));
+      const remainingForStairs = remainingTiles.filter((tile) => !isSameTile(tile, keyChestTile));
+      let stairTile = null;
+      if (blockedForStairs.length > 0) {
+        stairTile = blockedForStairs.pop();
+      } else if (remainingForStairs.length > 0) {
+        stairTile = remainingForStairs.pop();
+      }
+      if (stairTile) {
+        map[stairTile.z][stairTile.x] = TILE.STAIRS;
+      }
+
+      const used = new Set();
+      if (keyChestTile) used.add(`${keyChestTile.x},${keyChestTile.z}`);
+      if (stairTile) used.add(`${stairTile.x},${stairTile.z}`);
+
+      const placeablePool = remainingTiles.filter((t) => !used.has(`${t.x},${t.z}`));
+      placeablePool.sort(() => Math.random() - 0.5);
+
+      // Place Chests (first chest always has key)
+      const chests = [];
+      if (keyChestTile) {
+        map[keyChestTile.z][keyChestTile.x] = TILE.CHEST;
+        chests.push({
+          x: keyChestTile.x,
+          z: keyChestTile.z,
+          hasKey: true,
+          opened: false
+        });
+      }
+
+      const chestCount = 2 + Math.floor(Math.random() * 2);
+      while (chests.length < chestCount && placeablePool.length > 0) {
+        const tile = placeablePool.pop();
+        map[tile.z][tile.x] = TILE.CHEST;
+        chests.push({
+          x: tile.x,
+          z: tile.z,
+          hasKey: false,
+          opened: false
+        });
+      }
+
+      // Place Monsters
+      const monsters = [];
+      const monsterCount = 3 + gameState.floor;
+      for (let i = 0; i < monsterCount && placeablePool.length > 0; i++) {
+        const tile = placeablePool.pop();
+        monsters.push({
+          id: i,
+          x: tile.x,
+          z: tile.z,
+          name: gameState.floor === 1 ? 'ダークスライム' : 'スケルトンナイト',
+          hp: 25 + gameState.floor * 15,
+          maxHp: 25 + gameState.floor * 15,
+          atk: 8 + gameState.floor * 4,
+          exp: 20 + gameState.floor * 10,
+          gold: 15 + gameState.floor * 10,
+          mesh: null
+        });
+      }
+
+      gameState.map = map;
+      gameState.walls = walls;
+      gameState.visited = visited;
+      gameState.chests = chests;
+      gameState.monsters = monsters;
+      gameState.doors = door ? [door] : [];
+      
+      // Reset player position to start
+      gameState.player.x = 1;
+      gameState.player.z = 1;
+      gameState.player.targetX = 1;
+      gameState.player.targetZ = 1;
+      gameState.player.dir = 1; // Facing East
+      gameState.player.targetAngle = -Math.PI / 2;
+
+      markVisited(1, 1);
+    }
+
+    function markVisited(px, pz) {
+      gameState.visited[pz][px] = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. THREE.JS 3D SCENE & RENDERING ENGINE
+    // -------------------------------------------------------------------------
+    let scene, camera, renderer;
+    let playerLight, torchParticles = [];
+    let playerTorchParticleSystem = null;
+    let playerTorchParticlesData = [];
+    let playerTorchPositions = null;
+    let playerTorchColors = null;
+    let dungeonGroup, monsterMeshes = [], chestMeshes = [];
+    let doorMeshes = [];
+    const WALL_THICKNESS = 0.18;
+
+    function markShared(resource) {
+      if (resource && resource.userData) {
+        resource.userData.sharedResource = true;
+      }
+      return resource;
+    }
+
+    function disposeMaterial(material) {
+      if (!material) return;
+      if (Array.isArray(material)) {
+        material.forEach(disposeMaterial);
+        return;
+      }
+      if (material.userData && material.userData.sharedResource) return;
+      material.dispose();
+    }
+
+    function disposeObjectResources(root) {
+      if (!root) return;
+      root.traverse((obj) => {
+        if (obj.geometry && !(obj.geometry.userData && obj.geometry.userData.sharedResource)) {
+          obj.geometry.dispose();
+        }
+        if (obj.material) {
+          disposeMaterial(obj.material);
+        }
+      });
+    }
+
+    function disposeDungeonGroup() {
+      if (!dungeonGroup) return;
+      disposeObjectResources(dungeonGroup);
+      scene.remove(dungeonGroup);
+      dungeonGroup = null;
+    }
+
+    const WALL_TEX = generateStoneWallTexture();
+    const WALL_BUMP_TEX = generateStoneWallBumpTexture();
+    const WALL_ROUGH_TEX = generateStoneWallRoughnessTexture();
+    const FLOOR_TEX = generateCobbleFloorTexture();
+    const FLOOR_BUMP_TEX = generateCobbleFloorBumpTexture();
+    const FLOOR_ROUGH_TEX = generateCobbleFloorRoughnessTexture();
+    const DOOR_TEX = generateWoodDoorTexture();
+
+    const WALL_MAT = new THREE.MeshStandardMaterial({
+      map: WALL_TEX,
+      bumpMap: WALL_BUMP_TEX,
+      bumpScale: 0.28,
+      roughnessMap: WALL_ROUGH_TEX,
+      roughness: 0.92,
+      metalness: 0.2
+    });
+
+    const FLOOR_MAT = new THREE.MeshStandardMaterial({
+      map: FLOOR_TEX,
+      bumpMap: FLOOR_BUMP_TEX,
+      bumpScale: 0.18,
+      roughnessMap: FLOOR_ROUGH_TEX,
+      roughness: 0.95,
+      metalness: 0.1
+    });
+
+    const CEILING_MAT = new THREE.MeshStandardMaterial({
+      color: 0x111115,
+      roughness: 1.0
+    });
+
+    const SHARED_GEO = {
+      floor: markShared(new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE)),
+      wall: markShared(new THREE.BoxGeometry(TILE_SIZE, TILE_SIZE, WALL_THICKNESS)),
+      chest: markShared(new THREE.BoxGeometry(0.8, 0.6, 0.6)),
+      lock: markShared(new THREE.BoxGeometry(0.15, 0.15, 0.05)),
+      stair: markShared(new THREE.CylinderGeometry(0.8, 1, 0.2, 8)),
+      doorX: markShared(new THREE.BoxGeometry(0.2, TILE_SIZE * 0.9, TILE_SIZE * 0.9)),
+      doorZ: markShared(new THREE.BoxGeometry(TILE_SIZE * 0.9, TILE_SIZE * 0.9, 0.2)),
+      torchMount: markShared(new THREE.BoxGeometry(0.16, 0.22, 0.04)),
+      torchHolder: markShared(new THREE.CylinderGeometry(0.03, 0.045, 0.42)),
+      torchEmber: markShared(new THREE.SphereGeometry(0.08, 10, 10)),
+      slimeBody: markShared(new THREE.SphereGeometry(0.7, 16, 16)),
+      slimeEye: markShared(new THREE.SphereGeometry(0.1, 8, 8)),
+      knightBody: markShared(new THREE.BoxGeometry(0.9, 1.2, 0.6)),
+      knightHead: markShared(new THREE.BoxGeometry(0.5, 0.5, 0.5)),
+      knightVisor: markShared(new THREE.BoxGeometry(0.35, 0.08, 0.1))
+    };
+
+    const SHARED_MAT = {
+      wall: markShared(WALL_MAT),
+      floor: markShared(FLOOR_MAT),
+      ceiling: markShared(CEILING_MAT),
+      chest: markShared(new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.5, metalness: 0.3 })),
+      lock: markShared(new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.9 })),
+      stair: markShared(new THREE.MeshStandardMaterial({ color: 0x44aa66, emissive: 0x113311, roughness: 0.4 })),
+      door: markShared(new THREE.MeshStandardMaterial({ map: DOOR_TEX, roughness: 0.72, metalness: 0.1 })),
+      torchMount: markShared(new THREE.MeshStandardMaterial({ color: 0x2e241c, roughness: 0.85, metalness: 0.15 })),
+      torchHolder: markShared(new THREE.MeshStandardMaterial({ color: 0x332211, metalness: 0.55, roughness: 0.65 })),
+      torchEmber: markShared(new THREE.MeshStandardMaterial({ color: 0xffa43a, emissive: 0xff5a12, emissiveIntensity: 1.2, roughness: 0.4 })),
+      slimeBody: markShared(new THREE.MeshStandardMaterial({
+        color: 0x8811aa,
+        emissive: 0x330044,
+        roughness: 0.1,
+        transparent: true,
+        opacity: 0.85
+      })),
+      slimeEye: markShared(new THREE.MeshBasicMaterial({ color: 0xff0022 })),
+      knightBody: markShared(new THREE.MeshStandardMaterial({ color: 0x222228, metalness: 0.8, roughness: 0.3 })),
+      knightHead: markShared(new THREE.MeshStandardMaterial({ color: 0x111115, metalness: 0.9 })),
+      knightVisor: markShared(new THREE.MeshBasicMaterial({ color: 0xff2200 }))
+    };
+
+    function disposeTopLevelResources() {
+      disposeDungeonGroup();
+      if (playerTorchParticleSystem) {
+        scene.remove(playerTorchParticleSystem);
+        playerTorchParticleSystem.geometry.dispose();
+        playerTorchParticleSystem.material.dispose();
+        playerTorchParticleSystem = null;
+      }
+      if (renderer) {
+        renderer.dispose();
+      }
+    }
+
+    function init3D() {
+      const container = document.getElementById('canvas-container');
+      
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x050508, 0.18);
+
+      camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 30);
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      container.appendChild(renderer.domElement);
+
+      // Ambient Light (Dim dungeon glow)
+      const ambientLight = new THREE.AmbientLight(0x1a1825, 0.6);
+      scene.add(ambientLight);
+
+      // Player Torch Light
+      playerLight = new THREE.PointLight(0xffaa44, 2.2, 11);
+      playerLight.castShadow = true;
+      playerLight.shadow.mapSize.width = 512;
+      playerLight.shadow.mapSize.height = 512;
+      scene.add(playerLight);
+
+      initPlayerTorchParticles();
+
+      // Window Resize Listener
+      window.addEventListener('resize', onWindowResize);
+      window.addEventListener('beforeunload', disposeTopLevelResources, { once: true });
+
+      buildDungeon3D();
+    }
+
+    function onWindowResize() {
+      const container = document.getElementById('canvas-container');
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    /**
+     * 現在の gameState をもとに 3D ダンジョンの可視オブジェクトを再構築する。
+     * @returns {void}
+     */
+    function buildDungeon3D() {
+      disposeDungeonGroup();
+      
+      dungeonGroup = new THREE.Group();
+      monsterMeshes = [];
+      chestMeshes = [];
+      torchParticles = [];
+      doorMeshes = [];
+
+      function addWallSegment(centerX, centerZ, rotationY, roomTile, normalX, normalZ) {
+        const wallMesh = new THREE.Mesh(SHARED_GEO.wall, SHARED_MAT.wall);
+        wallMesh.position.set(centerX, TILE_SIZE / 2, centerZ);
+        wallMesh.rotation.y = rotationY;
+        wallMesh.castShadow = false;
+        wallMesh.receiveShadow = true;
+        dungeonGroup.add(wallMesh);
+
+        if (roomTile === TILE.EMPTY && Math.random() < 0.08) {
+          createWallTorch(centerX, centerZ, normalX, normalZ);
+        }
+      }
+
+      for (let z = 0; z < MAP_SIZE; z++) {
+        for (let x = 0; x < MAP_SIZE; x++) {
+          const tile = gameState.map[z][x];
+          const wx = x * TILE_SIZE;
+          const wz = z * TILE_SIZE;
+
+          // Floor & Ceiling
+          if (isInteriorCell(x, z)) {
+            // Floor
+            const floorMesh = new THREE.Mesh(SHARED_GEO.floor, SHARED_MAT.floor);
+            floorMesh.rotation.x = -Math.PI / 2;
+            floorMesh.position.set(wx, 0, wz);
+            floorMesh.receiveShadow = true;
+            dungeonGroup.add(floorMesh);
+
+            // Ceiling
+            const ceilMesh = new THREE.Mesh(SHARED_GEO.floor, SHARED_MAT.ceiling);
+            ceilMesh.rotation.x = Math.PI / 2;
+            ceilMesh.position.set(wx, TILE_SIZE, wz);
+            dungeonGroup.add(ceilMesh);
+          }
+
+          if (isInteriorCell(x, z)) {
+            if (gameState.walls[z][x].n) {
+              addWallSegment(wx, wz - TILE_SIZE / 2, 0, tile, 0, 1);
+            }
+            if (gameState.walls[z][x].w) {
+              addWallSegment(wx - TILE_SIZE / 2, wz, Math.PI / 2, tile, 1, 0);
+            }
+            if (x === MAP_SIZE - 2 && gameState.walls[z][x].e) {
+              addWallSegment(wx + TILE_SIZE / 2, wz, Math.PI / 2, tile, -1, 0);
+            }
+            if (z === MAP_SIZE - 2 && gameState.walls[z][x].s) {
+              addWallSegment(wx, wz + TILE_SIZE / 2, 0, tile, 0, -1);
+            }
+          }
+
+          // Chest
+          if (tile === TILE.CHEST) {
+            const chestMesh = new THREE.Mesh(SHARED_GEO.chest, SHARED_MAT.chest);
+            chestMesh.position.set(wx, 0.3, wz);
+            chestMesh.castShadow = false;
+            chestMesh.receiveShadow = true;
+            dungeonGroup.add(chestMesh);
+
+            // Gold lock detail
+            const lockMesh = new THREE.Mesh(SHARED_GEO.lock, SHARED_MAT.lock);
+            lockMesh.position.set(wx, 0.3, wz + 0.31);
+            dungeonGroup.add(lockMesh);
+
+            chestMeshes.push({ x, z, mesh: chestMesh });
+          }
+          // Stairs Exit
+          else if (tile === TILE.STAIRS) {
+            const stairMesh = new THREE.Mesh(SHARED_GEO.stair, SHARED_MAT.stair);
+            stairMesh.position.set(wx, 0.1, wz);
+            dungeonGroup.add(stairMesh);
+          }
+
+        }
+      }
+
+      gameState.doors.forEach((door) => {
+        const doorGeo = door.axis === 'x' ? SHARED_GEO.doorX : SHARED_GEO.doorZ;
+        const doorPivot = new THREE.Group();
+        const doorMesh = new THREE.Mesh(doorGeo, SHARED_MAT.door);
+        doorMesh.castShadow = true;
+        doorMesh.receiveShadow = true;
+
+        const centerX = door.side === 'e'
+          ? door.x * TILE_SIZE + TILE_SIZE / 2
+          : door.x * TILE_SIZE;
+        const centerZ = door.side === 's'
+          ? door.z * TILE_SIZE + TILE_SIZE / 2
+          : door.z * TILE_SIZE;
+
+        if (door.side === 'e') {
+          doorPivot.position.set(centerX, TILE_SIZE / 2, centerZ - TILE_SIZE * 0.45);
+          doorMesh.position.set(0, 0, TILE_SIZE * 0.45);
+        } else {
+          doorPivot.position.set(centerX - TILE_SIZE * 0.45, TILE_SIZE / 2, centerZ);
+          doorMesh.position.set(TILE_SIZE * 0.45, 0, 0);
+        }
+
+        doorPivot.add(doorMesh);
+        dungeonGroup.add(doorPivot);
+        doorMeshes.push({ id: door.id, pivot: doorPivot, openProgress: door.open ? 1 : 0, isOpening: false, side: door.side });
+      });
+
+      // Render Monsters
+      gameState.monsters.forEach(m => {
+        const mMesh = createMonsterMesh(m.name);
+        mMesh.position.set(m.x * TILE_SIZE, 0.8, m.z * TILE_SIZE);
+        dungeonGroup.add(mMesh);
+        m.mesh = mMesh;
+      });
+
+      scene.add(dungeonGroup);
+    }
+
+    function initPlayerTorchParticles() {
+      if (playerTorchParticleSystem) {
+        scene.remove(playerTorchParticleSystem);
+        playerTorchParticleSystem.geometry.dispose();
+        playerTorchParticleSystem.material.dispose();
+        playerTorchParticleSystem = null;
+      }
+
+      const particleCount = 70;
+      const geo = new THREE.BufferGeometry();
+      const positions = new Float32Array(particleCount * 3);
+      const colors = new Float32Array(particleCount * 3);
+      playerTorchParticlesData = [];
+
+      for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = 0;
+        positions[i * 3 + 1] = -999;
+        positions[i * 3 + 2] = 0;
+
+        colors[i * 3] = 0.45;
+        colors[i * 3 + 1] = 0.38;
+        colors[i * 3 + 2] = 0.35;
+
+        playerTorchParticlesData.push({
+          life: 0,
+          maxLife: 0,
+          vel: new THREE.Vector3(),
+          pos: new THREE.Vector3()
+        });
+      }
+
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      const mat = new THREE.PointsMaterial({
+        size: 0.06,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.45,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+
+      playerTorchParticleSystem = new THREE.Points(geo, mat);
+      playerTorchPositions = positions;
+      playerTorchColors = colors;
+      scene.add(playerTorchParticleSystem);
+    }
+
+    function emitPlayerTorchParticle(i, origin) {
+      const p = playerTorchParticlesData[i];
+      p.life = 0;
+      p.maxLife = 0.55 + Math.random() * 0.9;
+      p.pos.set(
+        origin.x + (Math.random() - 0.5) * 0.16,
+        origin.y + 0.04 + Math.random() * 0.07,
+        origin.z + (Math.random() - 0.5) * 0.16
+      );
+      p.vel.set(
+        (Math.random() - 0.5) * 0.08,
+        0.22 + Math.random() * 0.2,
+        (Math.random() - 0.5) * 0.08
+      );
+    }
+
+    function updatePlayerTorchParticles(delta, time) {
+      if (!playerTorchParticleSystem || !playerLight) return;
+
+      const origin = playerLight.position;
+      for (let i = 0; i < playerTorchParticlesData.length; i++) {
+        const p = playerTorchParticlesData[i];
+        if (p.life >= p.maxLife) {
+          if (Math.random() < 0.35) {
+            emitPlayerTorchParticle(i, origin);
+          } else {
+            playerTorchPositions[i * 3 + 1] = -999;
+            continue;
+          }
+        }
+
+        p.life += delta;
+        const lifeRatio = p.life / p.maxLife;
+        p.vel.x += Math.sin(time * 4 + i) * 0.0009;
+        p.vel.z += Math.cos(time * 3 + i * 0.7) * 0.0009;
+        p.pos.addScaledVector(p.vel, delta);
+
+        playerTorchPositions[i * 3] = p.pos.x;
+        playerTorchPositions[i * 3 + 1] = p.pos.y;
+        playerTorchPositions[i * 3 + 2] = p.pos.z;
+
+        const gray = 0.28 + (1 - lifeRatio) * 0.34;
+        const ember = Math.max(0, 0.22 - lifeRatio * 0.28);
+        playerTorchColors[i * 3] = gray + ember;
+        playerTorchColors[i * 3 + 1] = gray * 0.92;
+        playerTorchColors[i * 3 + 2] = gray * 0.86;
+      }
+
+      playerTorchParticleSystem.geometry.attributes.position.needsUpdate = true;
+      playerTorchParticleSystem.geometry.attributes.color.needsUpdate = true;
+    }
+
+    function startDoorOpenAnimation(x, z, dirIndex) {
+      const doorDef = getDoorAtEdge(gameState.doors, x, z, dirIndex);
+      if (!doorDef || doorDef.open) return false;
+
+      const door = doorMeshes.find(d => d.id === doorDef.id);
+      if (!door || door.isOpening) return false;
+
+      door.isOpening = true;
+      return true;
+    }
+
+    function updateDoorAnimations(delta) {
+      doorMeshes.forEach((door) => {
+        if (!door.isOpening || door.openProgress >= 1) return;
+        door.openProgress = Math.min(1, door.openProgress + delta * 1.8);
+
+        const eased = 1 - Math.pow(1 - door.openProgress, 3);
+        door.pivot.rotation.y = -Math.PI * 0.52 * eased;
+
+        if (door.openProgress >= 1) {
+          const doorDef = gameState.doors.find((entry) => entry.id === door.id);
+          if (doorDef) {
+            doorDef.open = true;
+          }
+          addLog('扉が重い音を立てて開いた。');
+          updateUI();
+        }
+      });
+    }
+
+    /**
+     * 壁面法線に沿ってトーチ（台座・炎・ライト）を配置する。
+     * @param {number} wx 壁セグメント中心X
+     * @param {number} wz 壁セグメント中心Z
+     * @param {number} normalX 壁面法線X
+     * @param {number} normalZ 壁面法線Z
+     * @returns {void}
+     */
+    function createWallTorch(wx, wz, normalX, normalZ) {
+      const wallFaceX = wx + normalX * (WALL_THICKNESS / 2 + 0.02);
+      const wallFaceZ = wz + normalZ * (WALL_THICKNESS / 2 + 0.02);
+
+      const mountPlate = new THREE.Mesh(SHARED_GEO.torchMount, SHARED_MAT.torchMount);
+      mountPlate.position.set(wallFaceX, 1.78, wallFaceZ);
+      if (normalX !== 0) {
+        mountPlate.rotation.y = Math.PI / 2;
+      }
+      dungeonGroup.add(mountPlate);
+
+      const torchHolder = new THREE.Mesh(SHARED_GEO.torchHolder, SHARED_MAT.torchHolder);
+      torchHolder.position.set(
+        wallFaceX + normalX * 0.18,
+        1.82,
+        wallFaceZ + normalZ * 0.18
+      );
+      if (normalZ !== 0) {
+        torchHolder.rotation.x = Math.PI / 2;
+      } else {
+        torchHolder.rotation.z = Math.PI / 2;
+      }
+      dungeonGroup.add(torchHolder);
+
+      const ember = new THREE.Mesh(SHARED_GEO.torchEmber, SHARED_MAT.torchEmber);
+      ember.position.set(
+        wallFaceX + normalX * 0.32,
+        1.97,
+        wallFaceZ + normalZ * 0.32
+      );
+      dungeonGroup.add(ember);
+
+      const torchLight = new THREE.PointLight(0xff7722, 1.2, 6);
+      torchLight.position.set(
+        wallFaceX + normalX * 0.34,
+        2.05,
+        wallFaceZ + normalZ * 0.34
+      );
+      dungeonGroup.add(torchLight);
+
+      torchParticles.push({ light: torchLight, baseIntensity: 1.2, x: wallFaceX, z: wallFaceZ });
+    }
+
+    /**
+     * モンスター名に応じた見た目メッシュを生成する。
+     * @param {string} name モンスター名
+     * @returns {THREE.Group} モンスター表示用グループ
+     */
+    function createMonsterMesh(name) {
+      const group = new THREE.Group();
+
+      if (name.includes('スライム')) {
+        // Dark Glowing Slime Body
+        const body = new THREE.Mesh(SHARED_GEO.slimeBody, SHARED_MAT.slimeBody);
+        body.scale.set(1, 0.7, 1);
+        group.add(body);
+
+        // Glowing Red Eyes
+        const eye1 = new THREE.Mesh(SHARED_GEO.slimeEye, SHARED_MAT.slimeEye);
+        eye1.position.set(-0.25, 0.2, 0.5);
+        const eye2 = new THREE.Mesh(SHARED_GEO.slimeEye, SHARED_MAT.slimeEye);
+        eye2.position.set(0.25, 0.2, 0.5);
+        group.add(eye1);
+        group.add(eye2);
+      } else {
+        // Dark Knight Golem
+        const body = new THREE.Mesh(SHARED_GEO.knightBody, SHARED_MAT.knightBody);
+        body.position.y = 0.6;
+        group.add(body);
+
+        const head = new THREE.Mesh(SHARED_GEO.knightHead, SHARED_MAT.knightHead);
+        head.position.y = 1.45;
+        group.add(head);
+
+        const visor = new THREE.Mesh(SHARED_GEO.knightVisor, SHARED_MAT.knightVisor);
+        visor.position.set(0, 1.45, 0.26);
+        group.add(visor);
+      }
+
+      return group;
+    }
+
+    function removeMonsterMesh(monster) {
+      if (!monster || !monster.mesh) return;
+      dungeonGroup.remove(monster.mesh);
+      disposeObjectResources(monster.mesh);
+      monster.mesh = null;
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. MOVEMENT & GAME ACTIONS
+    // -------------------------------------------------------------------------
+    const DIR_VECTORS = [
+      { x: 0, z: -1 }, // 0: North (-Z)
+      { x: 1, z: 0 },  // 1: East (+X)
+      { x: 0, z: 1 },  // 2: South (+Z)
+      { x: -1, z: 0 }  // 3: West (-X)
+    ];
+
+    function normalizeAngle(angle) {
+      while (angle > Math.PI) angle -= Math.PI * 2;
+      while (angle < -Math.PI) angle += Math.PI * 2;
+      return angle;
+    }
+
+    function shortestAngleDiff(from, to) {
+      return normalizeAngle(to - from);
+    }
+
+    function getFrontTargetableMonster() {
+      const p = gameState.player;
+      const vec = DIR_VECTORS[p.dir];
+      const targetX = p.x + vec.x;
+      const targetZ = p.z + vec.z;
+
+      if (!canTraverseEdge(gameState.walls, gameState.doors, p.x, p.z, p.dir)) {
+        return null;
+      }
+
+      return gameState.monsters.find(m => m.x === targetX && m.z === targetZ && m.hp > 0) || null;
+    }
+
+    /**
+     * プレイヤーを移動または扉インタラクションさせる。
+     * @param {number} dirDelta 進行方向の相対値（0前進/1右移動/2後退/3左移動）
+     * @returns {void}
+     */
+    function movePlayer(dirDelta) {
+      if (gameState.player.isMoving) return;
+
+      const p = gameState.player;
+      const targetDir = (p.dir + dirDelta + 4) % 4;
+      const vec = DIR_VECTORS[targetDir];
+
+      const nextX = p.x + vec.x;
+      const nextZ = p.z + vec.z;
+
+      if (!isInteriorCell(nextX, nextZ) || hasWallBetween(gameState.walls, p.x, p.z, targetDir)) {
+        addLog('壁が立ちはだかっている。');
+        return;
+      }
+
+      const blockingDoor = getDoorAtEdge(gameState.doors, p.x, p.z, targetDir);
+      if (blockingDoor && !blockingDoor.open) {
+        const doorState = doorMeshes.find(d => d.id === blockingDoor.id);
+        if (doorState && doorState.isOpening) {
+          addLog('扉が開くのを待っている...');
+          return;
+        }
+
+        if (p.keys > 0) {
+          const started = startDoorOpenAnimation(p.x, p.z, targetDir);
+          if (started) {
+            p.keys--;
+            addLog('扉の鍵を開けた。扉がゆっくり開いていく...');
+            sound.playChest();
+          } else {
+            addLog('扉はびくともしない...');
+          }
+          updateUI();
+          return;
+        } else {
+          addLog('扉は鍵がかかっている...（鍵が必要）');
+          return;
+        }
+      }
+
+      const targetTile = gameState.map[nextZ][nextX];
+
+      // Check Monster Collision
+      const monsterIndex = gameState.monsters.findIndex(m => m.x === nextX && m.z === nextZ && m.hp > 0);
+      if (monsterIndex !== -1) {
+        addLog(`${gameState.monsters[monsterIndex].name} が行く手を阻んでいる！`);
+        return;
+      }
+
+      // Perform Step Move
+      p.x = nextX;
+      p.z = nextZ;
+      p.isMoving = true;
+      sound.playFootstep();
+
+      markVisited(p.x, p.z);
+      updateUI();
+      checkTileTrigger(p.x, p.z);
+    }
+
+    function turnPlayer(angleDelta) {
+      if (gameState.player.isMoving) return;
+      const p = gameState.player;
+      p.dir = (p.dir + angleDelta + 4) % 4;
+      p.targetAngle = normalizeAngle(p.targetAngle - (angleDelta * Math.PI / 2));
+      updateUI();
+    }
+
+    function checkTileTrigger(px, pz) {
+      const tile = gameState.map[pz][px];
+
+      // Chest Trigger
+      if (tile === TILE.CHEST) {
+        const chest = gameState.chests.find(c => c.x === px && c.z === pz);
+        if (chest && !chest.opened) {
+          chest.opened = true;
+          sound.playChest();
+          if (chest.hasKey) {
+            gameState.player.keys++;
+            addLog('宝箱を開けた！「扉の鍵」を手に入れた！');
+          } else {
+            const goldFound = 30 + Math.floor(Math.random() * 30);
+            gameState.player.gold += goldFound;
+            addLog(`宝箱を開けた！ ${goldFound} GOLD を手に入れた！`);
+          }
+          gameState.map[pz][px] = TILE.EMPTY;
+          updateUI();
+        }
+      }
+
+      // Stairs Trigger
+      if (tile === TILE.STAIRS) {
+        sound.playHeal();
+        gameState.floor++;
+        showModal(`階層クリア！`, `深層 B${gameState.floor}F へ降り立った。魔物の気配が強くなる...`, '次へ進む', () => {
+          generateDungeonMap();
+          buildDungeon3D();
+          updateUI();
+          hideModal();
+        });
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. COMBAT SYSTEM
+    // -------------------------------------------------------------------------
+    function playerAttack() {
+      sound.init();
+      const p = gameState.player;
+      const monster = getFrontTargetableMonster();
+
+      if (monster) {
+        sound.playAttack();
+        const dmg = 12 + Math.floor(Math.random() * 8) + p.level * 3;
+        monster.hp -= dmg;
+        addLog(`${monster.name} に ${dmg} のダメージ！`);
+
+        if (monster.hp <= 0) {
+          addLog(`${monster.name} を倒した！ EXP+${monster.exp}, GOLD+${monster.gold}`);
+          p.exp += monster.exp;
+          p.gold += monster.gold;
+          removeMonsterMesh(monster);
+
+          checkLevelUp();
+        } else {
+          monsterCounterAttack(monster);
+        }
+      } else {
+        addLog('空を切った...');
+      }
+
+      updateUI();
+    }
+
+    function playerSpell() {
+      sound.init();
+      const p = gameState.player;
+      if (p.mp < 10) {
+        addLog('MPが足りない！');
+        return;
+      }
+
+      p.mp -= 10;
+      sound.playFireball();
+
+        const monster = getFrontTargetableMonster();
+
+      if (monster) {
+        const dmg = 28 + Math.floor(Math.random() * 12);
+        monster.hp -= dmg;
+        addLog(`ファイアボルト！ ${monster.name} に ${dmg} の大ダメージ！`);
+
+        if (monster.hp <= 0) {
+          addLog(`${monster.name} を焼尽した！ EXP+${monster.exp}, GOLD+${monster.gold}`);
+          p.exp += monster.exp;
+          p.gold += monster.gold;
+          removeMonsterMesh(monster);
+
+          checkLevelUp();
+        } else {
+          monsterCounterAttack(monster);
+        }
+      } else {
+        addLog('炎は暗闇へ消えていった...');
+      }
+
+      updateUI();
+    }
+
+    function playerHeal() {
+      sound.init();
+      const p = gameState.player;
+      if (p.mp < 15) {
+        addLog('MPが足りない！');
+        return;
+      }
+
+      p.mp -= 15;
+      const healAmt = 35 + p.level * 5;
+      p.hp = Math.min(p.maxHp, p.hp + healAmt);
+      sound.playHeal();
+      triggerFlash('heal-flash');
+      addLog(`回復魔法！ HPが ${healAmt} 回復した。`);
+
+      updateUI();
+    }
+
+    function monsterCounterAttack(monster) {
+      setTimeout(() => {
+        if (monster.hp <= 0) return;
+        sound.playHit();
+        triggerFlash('damage-flash');
+
+        const dmg = Math.max(1, monster.atk - Math.floor(Math.random() * 3));
+        gameState.player.hp -= dmg;
+        addLog(`${monster.name} の攻撃！ ${dmg} のダメージを受けた！`);
+
+        if (gameState.player.hp <= 0) {
+          gameState.player.hp = 0;
+          showModal('GAME OVER', '力尽きて暗闇の中に倒れた...', '最初からやり直す', () => {
+            gameState.floor = 1;
+            gameState.player.hp = 100;
+            gameState.player.mp = 50;
+            gameState.player.level = 1;
+            gameState.player.exp = 0;
+            gameState.player.gold = 0;
+            gameState.player.keys = 0;
+            generateDungeonMap();
+            buildDungeon3D();
+            updateUI();
+            hideModal();
+          });
+        }
+        updateUI();
+      }, 300);
+    }
+
+    function checkLevelUp() {
+      const p = gameState.player;
+      const nextExp = p.level * 50;
+      if (p.exp >= nextExp) {
+        p.level++;
+        p.maxHp += 20;
+        p.hp = p.maxHp;
+        p.maxMp += 10;
+        p.mp = p.maxMp;
+        sound.playHeal();
+        addLog(`LEVEL UP！ レベル ${p.level} に上がった！ (HP/MP全回復)`);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. UI & MINIMAP RENDERER
+    // -------------------------------------------------------------------------
+    function addLog(msg) {
+      const logEl = document.getElementById('game-log');
+      const p = document.createElement('p');
+      p.textContent = msg;
+      logEl.appendChild(p);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function triggerFlash(id) {
+      const el = document.getElementById(id);
+      el.classList.remove('opacity-0');
+      setTimeout(() => el.classList.add('opacity-0'), 250);
+    }
+
+    function updateUI() {
+      const p = gameState.player;
+
+      // Stats
+      document.getElementById('stat-level').textContent = p.level;
+      document.getElementById('stat-gold').textContent = p.gold;
+      document.getElementById('stat-keys').textContent = p.keys;
+      document.getElementById('floor-badge').textContent = `B${gameState.floor}F`;
+
+      // Bars
+      document.getElementById('hp-text').textContent = `${p.hp} / ${p.maxHp}`;
+      document.getElementById('hp-bar').style.width = `${(p.hp / p.maxHp) * 100}%`;
+
+      document.getElementById('mp-text').textContent = `${p.mp} / ${p.maxMp}`;
+      document.getElementById('mp-bar').style.width = `${(p.mp / p.maxMp) * 100}%`;
+
+      // Target Bar Check
+      const vec = DIR_VECTORS[p.dir];
+      const frontX = p.x + vec.x;
+      const frontZ = p.z + vec.z;
+      const monster = canTraverseEdge(gameState.walls, gameState.doors, p.x, p.z, p.dir)
+        ? gameState.monsters.find(m => m.x === frontX && m.z === frontZ && m.hp > 0)
+        : null;
+
+      const targetBar = document.getElementById('target-bar');
+      const prompt = document.getElementById('interaction-prompt');
+
+      if (monster) {
+        targetBar.classList.remove('opacity-0');
+        document.getElementById('target-name').textContent = monster.name;
+        document.getElementById('target-hp-text').textContent = `${monster.hp}/${monster.maxHp}`;
+        document.getElementById('target-hp-bar').style.width = `${(monster.hp / monster.maxHp) * 100}%`;
+        prompt.classList.remove('hidden');
+      } else {
+        targetBar.classList.add('opacity-0');
+        prompt.classList.add('hidden');
+      }
+
+      drawMinimap();
+    }
+
+    /**
+     * 踏破情報と辺データを使ってミニマップを再描画する。
+     * @returns {void}
+     */
+    function drawMinimap() {
+      const canvas = document.getElementById('minimap-canvas');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const tileSize = w / MAP_SIZE;
+      const drawnWallEdges = new Set();
+
+      function drawWallEdge(x1, y1, x2, y2) {
+        const keyA = `${x1.toFixed(2)},${y1.toFixed(2)}`;
+        const keyB = `${x2.toFixed(2)},${y2.toFixed(2)}`;
+        const edgeKey = keyA < keyB ? `${keyA}|${keyB}` : `${keyB}|${keyA}`;
+        if (drawnWallEdges.has(edgeKey)) return;
+        drawnWallEdges.add(edgeKey);
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, w, h);
+
+      for (let z = 0; z < MAP_SIZE; z++) {
+        for (let x = 0; x < MAP_SIZE; x++) {
+          if (!isInteriorCell(x, z) || !gameState.visited[z][x]) continue;
+
+          const tile = gameState.map[z][x];
+          const px = x * tileSize;
+          const py = z * tileSize;
+
+          if (tile === TILE.CHEST) {
+            ctx.fillStyle = '#ffd700';
+          } else if (tile === TILE.STAIRS) {
+            ctx.fillStyle = '#00ff88';
+          } else {
+            ctx.fillStyle = '#444455';
+          }
+
+          ctx.fillRect(px + 0.5, py + 0.5, tileSize - 1, tileSize - 1);
+
+          // Monsters on map
+          if (gameState.monsters.some(m => m.x === x && m.z === z && m.hp > 0)) {
+            ctx.fillStyle = '#ff2244';
+            ctx.beginPath();
+            ctx.arc(px + tileSize / 2, py + tileSize / 2, tileSize / 3, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.strokeStyle = '#c9ae76';
+          ctx.lineWidth = 2.2;
+          if (gameState.walls[z][x].n) {
+            drawWallEdge(px, py, px + tileSize, py);
+          }
+          if (gameState.walls[z][x].e) {
+            drawWallEdge(px + tileSize, py, px + tileSize, py + tileSize);
+          }
+          if (gameState.walls[z][x].s) {
+            drawWallEdge(px, py + tileSize, px + tileSize, py + tileSize);
+          }
+          if (gameState.walls[z][x].w) {
+            drawWallEdge(px, py, px, py + tileSize);
+          }
+        }
+      }
+
+      gameState.doors.forEach((door) => {
+        const aVisited = gameState.visited[door.z][door.x];
+        const otherX = door.side === 'e' ? door.x + 1 : door.x;
+        const otherZ = door.side === 's' ? door.z + 1 : door.z;
+        const bVisited = inMap(otherX, otherZ) && gameState.visited[otherZ][otherX];
+        if (!aVisited && !bVisited) return;
+
+        const px = door.x * tileSize;
+        const py = door.z * tileSize;
+        ctx.strokeStyle = door.open ? '#d8b35a' : '#b8860b';
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        if (door.side === 'e') {
+          ctx.moveTo(px + tileSize, py + 2);
+          ctx.lineTo(px + tileSize, py + tileSize - 2);
+        } else {
+          ctx.moveTo(px + 2, py + tileSize);
+          ctx.lineTo(px + tileSize - 2, py + tileSize);
+        }
+        ctx.stroke();
+      });
+
+      // Player Cursor
+      const px = gameState.player.x * tileSize + tileSize / 2;
+      const py = gameState.player.z * tileSize + tileSize / 2;
+
+      ctx.fillStyle = '#00ffff';
+      ctx.beginPath();
+      ctx.arc(px, py, tileSize / 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Direction Indicator
+      const vec = DIR_VECTORS[gameState.player.dir];
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + vec.x * tileSize, py + vec.z * tileSize);
+      ctx.stroke();
+    }
+
+    function showModal(title, desc, btnText, callback) {
+      document.getElementById('modal-title').textContent = title;
+      document.getElementById('modal-desc').textContent = desc;
+      const btn = document.getElementById('modal-btn');
+      btn.textContent = btnText;
+      btn.onclick = callback;
+      document.getElementById('modal-overlay').classList.remove('hidden');
+    }
+
+    function hideModal() {
+      document.getElementById('modal-overlay').classList.add('hidden');
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. MAIN ANIMATION LOOP & INPUT CONTROLS
+    // -------------------------------------------------------------------------
+    let clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const delta = clock.getDelta();
+      const time = clock.getElapsedTime();
+
+      // Smooth Camera Movement & Rotation Interpolation
+      const p = gameState.player;
+      const targetWorldX = p.x * TILE_SIZE;
+      const targetWorldZ = p.z * TILE_SIZE;
+
+      camera.position.x += (targetWorldX - camera.position.x) * 0.2;
+      camera.position.z += (targetWorldZ - camera.position.z) * 0.2;
+      camera.position.y = 1.5 + Math.sin(time * 4) * (p.isMoving ? 0.04 : 0.01); // Bobbing
+
+      camera.rotation.y = normalizeAngle(
+        camera.rotation.y + shortestAngleDiff(camera.rotation.y, p.targetAngle) * 0.2
+      );
+
+      // Position Player Torch
+      playerLight.position.set(camera.position.x, camera.position.y, camera.position.z);
+      playerLight.intensity = 2.0 + Math.sin(time * 12) * 0.25; // Flicker
+
+      // Animate Wall Torches
+      torchParticles.forEach(pt => {
+        pt.light.intensity = pt.baseIntensity + Math.sin(time * 10 + pt.x) * 0.3;
+      });
+
+      updateDoorAnimations(delta);
+      updatePlayerTorchParticles(delta, time);
+
+      // Animate Monsters (Hover / Pulse)
+      gameState.monsters.forEach(m => {
+        if (m.mesh && m.hp > 0) {
+          m.mesh.position.y = 0.8 + Math.sin(time * 3 + m.id) * 0.1;
+          m.mesh.rotation.y = camera.rotation.y; // Face camera billboard style
+        }
+      });
+
+      // Reset Moving Lock
+      if (Math.abs(targetWorldX - camera.position.x) < 0.05 && Math.abs(targetWorldZ - camera.position.z) < 0.05) {
+        p.isMoving = false;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    function setupControls() {
+      // Keyboard Controls
+      window.addEventListener('keydown', (e) => {
+        sound.init();
+        switch (e.key) {
+          case 'w': case 'W': case 'ArrowUp':
+            movePlayer(0);
+            break;
+          case 's': case 'S': case 'ArrowDown':
+            movePlayer(2);
+            break;
+          case 'a': case 'A': case 'ArrowLeft':
+            turnPlayer(3); // Turn Left
+            break;
+          case 'd': case 'D': case 'ArrowRight':
+            turnPlayer(1); // Turn Right
+            break;
+          case 'q': case 'Q': 
+            movePlayer(3); // Strafe Left
+            break;
+          case 'e': case 'E': 
+            movePlayer(1); // Strafe Right
+            break;
+          case ' ':
+            playerAttack();
+            break;
+          case '1':
+            playerSpell();
+            break;
+          case '2':
+            playerHeal();
+            break;
+        }
+      });
+
+      // Touch / UI Button Bindings
+      document.getElementById('btn-up').onclick = () => movePlayer(0);
+      document.getElementById('btn-down').onclick = () => movePlayer(2);
+      document.getElementById('btn-left').onclick = () => turnPlayer(3);
+      document.getElementById('btn-right').onclick = () => turnPlayer(1);
+
+      document.getElementById('btn-attack').onclick = () => playerAttack();
+      document.getElementById('btn-spell').onclick = () => playerSpell();
+      document.getElementById('btn-heal').onclick = () => playerHeal();
+    }
+
+    // Initialize Game on Load
+    window.onload = function() {
+      generateDungeonMap();
+      init3D();
+      setupControls();
+      updateUI();
+      animate();
+    };
+  </script>
+</body>
+</html>
