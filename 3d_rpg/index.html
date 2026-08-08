@@ -98,6 +98,35 @@
       background: rgba(180, 140, 70, 0.4);
       border-radius: 2px;
     }
+
+    @media (max-width: 767px) {
+      body {
+        height: 100dvh;
+      }
+
+      #mobile-footer {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+        padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+      }
+
+      #log-panel {
+        display: none;
+      }
+
+      #action-panel {
+        min-height: 4.5rem;
+      }
+
+      #navigation-panel {
+        width: 100%;
+        min-height: 7.5rem;
+      }
+
+      #navigation-panel button {
+        touch-action: none;
+      }
+    }
   </style>
 </head>
 <body class="w-screen h-screen overflow-hidden text-amber-100 flex flex-col justify-between">
@@ -181,10 +210,10 @@
   </main>
 
   <!-- Bottom HUD: Minimap, Action Buttons, D-Pad, Logs -->
-  <footer class="relative z-20 p-2 md:p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end bg-gradient-to-t from-black/95 via-black/80 to-transparent">
+  <footer id="mobile-footer" class="relative z-20 p-2 md:p-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-end bg-gradient-to-t from-black/95 via-black/80 to-transparent">
     
     <!-- Left Panel: Log & Keys -->
-    <div class="hud-panel p-2.5 rounded-xl flex flex-col h-32 md:h-36 justify-between">
+    <div id="log-panel" class="hud-panel p-2.5 rounded-xl flex flex-col h-32 md:h-36 justify-between">
       <div class="flex items-center justify-between border-b border-amber-900/40 pb-1 mb-1">
         <span class="text-xs font-bold text-amber-400 flex items-center gap-1">
           <i data-lucide="scroll" class="w-3.5 h-3.5"></i> 探索記録
@@ -200,7 +229,7 @@
     </div>
 
     <!-- Center Panel: Action Skill Buttons -->
-    <div class="hud-panel p-2.5 rounded-xl flex items-center justify-center gap-2 md:gap-3">
+    <div id="action-panel" class="hud-panel p-2.5 rounded-xl flex items-center justify-center gap-2 md:gap-3">
       <button id="btn-attack" class="hud-btn flex-1 py-2.5 md:py-3 px-2 rounded-lg flex flex-col items-center justify-center gap-1 text-amber-200">
         <i data-lucide="sword" class="w-5 h-5 md:w-6 md:h-6 text-red-400"></i>
         <span class="text-xs font-bold">攻撃 [Space]</span>
@@ -220,7 +249,7 @@
     </div>
 
     <!-- Right Panel: D-Pad Controls & Minimap -->
-    <div class="hud-panel p-2.5 rounded-xl flex items-center justify-between gap-3">
+    <div id="navigation-panel" class="hud-panel p-2.5 rounded-xl flex items-center justify-between gap-3">
       <!-- D-Pad for Mobile/Touch -->
       <div class="grid grid-cols-3 gap-1 w-32 h-28">
         <div></div>
@@ -2063,14 +2092,27 @@
       });
 
       // Touch / UI Button Bindings
-      document.getElementById('btn-up').onclick = () => movePlayer(0);
-      document.getElementById('btn-down').onclick = () => movePlayer(2);
-      document.getElementById('btn-left').onclick = () => turnPlayer(3);
-      document.getElementById('btn-right').onclick = () => turnPlayer(1);
+      function bindControl(buttonId, action) {
+        const button = document.getElementById(buttonId);
+        const handlePress = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          sound.init();
+          action();
+        };
 
-      document.getElementById('btn-attack').onclick = () => playerAttack();
-      document.getElementById('btn-spell').onclick = () => playerSpell();
-      document.getElementById('btn-heal').onclick = () => playerHeal();
+        button.addEventListener('touchstart', handlePress, { passive: false });
+        button.addEventListener('mousedown', handlePress);
+      }
+
+      bindControl('btn-up', () => movePlayer(0));
+      bindControl('btn-down', () => movePlayer(2));
+      bindControl('btn-left', () => turnPlayer(3));
+      bindControl('btn-right', () => turnPlayer(1));
+
+      bindControl('btn-attack', () => playerAttack());
+      bindControl('btn-spell', () => playerSpell());
+      bindControl('btn-heal', () => playerHeal());
     }
 
     // Initialize Game on Load
