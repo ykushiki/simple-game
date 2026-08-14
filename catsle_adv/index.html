@@ -221,6 +221,15 @@
         let isMouseDown = false;
         let lastMouseX = 0, lastMouseY = 0;
         let mouseYaw = 0, mousePitch = 0;
+        let isTouchDragging = false;
+        let lastTouchX = 0, lastTouchY = 0;
+        window.turnLeftHeld = false;
+        window.turnRightHeld = false;
+
+        window.setTurnButtonState = function(isLeft, pressed) {
+            if (isLeft) window.turnLeftHeld = !!pressed;
+            else window.turnRightHeld = !!pressed;
+        };
 
         const player = {
             x: 0,
@@ -673,8 +682,8 @@
             checkInteractions();
 
             // Keyboard/Mobile Rotation
-            if (keys['arrowleft']) mouseYaw += 0.04;
-            if (keys['arrowright']) mouseYaw -= 0.04;
+            if (keys['arrowleft'] || window.turnLeftHeld) mouseYaw += 0.04;
+            if (keys['arrowright'] || window.turnRightHeld) mouseYaw -= 0.04;
 
             let inputX = 0;
             let inputZ = 0;
@@ -784,19 +793,95 @@
                 mousePitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, mousePitch));
             });
 
+            const handleDragRotation = (clientX, clientY) => {
+                if (gameState !== 'PLAYING') return;
+                const dx = clientX - lastTouchX;
+                const dy = clientY - lastTouchY;
+                lastTouchX = clientX;
+                lastTouchY = clientY;
+
+                mouseYaw -= dx * 0.005;
+                mousePitch -= dy * 0.005;
+                mousePitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, mousePitch));
+            };
+
+            window.addEventListener('touchstart', (e) => {
+                if (gameState !== 'PLAYING') return;
+                const touch = e.touches[0];
+                if (!touch) return;
+                const target = e.target;
+                if (target && (target.closest('#mobile-controls') || target.closest('#hud') || target.closest('#start-screen') || target.closest('#clear-screen') || target.closest('#story-dialog'))) return;
+                isTouchDragging = true;
+                lastTouchX = touch.clientX;
+                lastTouchY = touch.clientY;
+            }, { passive: true });
+
+            window.addEventListener('touchmove', (e) => {
+                if (!isTouchDragging || gameState !== 'PLAYING') return;
+                if (!e.touches || !e.touches[0]) return;
+                const touch = e.touches[0];
+                handleDragRotation(touch.clientX, touch.clientY);
+            }, { passive: true });
+
+            window.addEventListener('touchend', () => {
+                isTouchDragging = false;
+            });
+            window.addEventListener('touchcancel', () => {
+                isTouchDragging = false;
+            });
+
             document.getElementById('dialog-close').addEventListener('click', () => {
                 document.getElementById('story-dialog').classList.add('hidden');
             });
         }
 
         function setupMobileUI() {
-            isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-            if (isMobile) {
-                document.getElementById('mobile-controls').classList.remove('hidden');
-            }
+            const touchCapable = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+            isMobile = touchCapable || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+            const mobileControls = document.getElementById('mobile-controls');
+            if (isMobile) mobileControls.classList.remove('hidden');
+            else mobileControls.classList.add('hidden');
 
             const zone = document.getElementById('joystick-zone');
             const knob = document.getElementById('joystick-knob');
+            const leftBtn = document.getElementById('btn-turn-left');
+            const rightBtn = document.getElementById('btn-turn-right');
+
+            const bindTurnButton = (button, isLeft) => {
+                const press = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.setTurnButtonState(isLeft, true);
+                };
+                const release = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.setTurnButtonState(isLeft, false);
+                };
+
+                button.addEventListener('pointerdown', press);
+                button.addEventListener('pointerup', release);
+                button.addEventListener('pointerleave', release);
+                button.addEventListener('pointercancel', release);
+                button.addEventListener('mousedown', press);
+                button.addEventListener('mouseup', release);
+                button.addEventListener('touchstart', press, { passive: false });
+                button.addEventListener('touchend', release, { passive: false });
+                button.addEventListener('touchcancel', release, { passive: false });
+                button.addEventListener('contextmenu', (e) => e.preventDefault());
+            };
+
+            bindTurnButton(leftBtn, true);
+            bindTurnButton(rightBtn, false);
+
+            window.addEventListener('pointerup', () => {
+                window.setTurnButtonState(true, false);
+                window.setTurnButtonState(false, false);
+            });
+            window.addEventListener('touchend', () => {
+                window.setTurnButtonState(true, false);
+                window.setTurnButtonState(false, false);
+            });
 
             zone.addEventListener('touchstart', (e) => {
                 e.preventDefault();
