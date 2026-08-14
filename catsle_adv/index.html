@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>石の城と光の泉 - 宝探しアドベンチャー</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js for 3D Graphics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Tone.js for Sound Effects -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&family=Yuji+Mai&display=swap');
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Shippori Mincho', serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+
+        .story-title {
+            font-family: 'Yuji Mai', serif;
+        }
+
+        /* Glassmorphism UI Panels */
+        .ui-card {
+            background: rgba(18, 22, 36, 0.82);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(212, 175, 55, 0.35);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+        }
+
+        /* Crosshair */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.75);
+            border-radius: 1px;
+        }
+        #crosshair::before { top: 4px; left: -5px; width: 20px; height: 2px; }
+        #crosshair::after { top: -5px; left: 4px; width: 2px; height: 20px; }
+
+        /* Story Dialog Box */
+        .dialog-box {
+            background: rgba(10, 14, 26, 0.92);
+            border: 2px solid #d4af37;
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.25);
+        }
+    </style>
+</head>
+<body class="relative w-full h-full bg-slate-950">
+
+    <!-- 3D Canvas Rendering Container -->
+    <div id="canvas-container" class="w-full h-full absolute inset-0 bg-slate-950"></div>
+
+    <!-- First Person Crosshair -->
+    <div id="crosshair"></div>
+
+    <!-- Top HUD Overlay -->
+    <div id="hud" class="absolute top-4 left-4 right-4 pointer-events-none flex justify-between items-start z-10 hidden">
+        <!-- Story Objective Card -->
+        <div class="ui-card p-3 rounded-2xl flex flex-col gap-1 pointer-events-auto max-w-[280px] md:max-w-xs">
+            <div class="text-xs text-amber-300 font-bold tracking-wider flex items-center gap-2">
+                <i class="fa-solid fa-map-location-dot text-amber-400"></i>
+                <span id="location-name">石の城：静寂の中庭</span>
+            </div>
+            <div class="text-xs text-slate-200 mt-0.5 leading-relaxed" id="objective-text">
+                銀色の狐ギンと一緒に、庭園と城に隠された<b>3つの『光の宝玉』</b>を探そう！
+            </div>
+        </div>
+
+        <!-- Inventory Orbs collected -->
+        <div class="ui-card p-3 rounded-2xl flex flex-col items-end gap-1.5 pointer-events-auto">
+            <div class="text-xs text-amber-300 font-semibold flex items-center gap-1.5">
+                <i class="fa-solid fa-gem text-amber-400"></i> 集めた光の宝玉
+            </div>
+            <div class="flex gap-2">
+                <div id="orb-sun" class="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-gray-600 text-xs transition-all">
+                    <i class="fa-solid fa-sun"></i>
+                </div>
+                <div id="orb-star" class="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-gray-600 text-xs transition-all">
+                    <i class="fa-solid fa-star"></i>
+                </div>
+                <div id="orb-moon" class="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-gray-600 text-xs transition-all">
+                    <i class="fa-solid fa-moon"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interaction Prompt Tooltip -->
+    <div id="interaction-prompt" class="absolute bottom-28 left-1/2 transform -translate-x-1/2 bg-slate-900/90 border-2 border-amber-400 text-amber-200 text-xs md:text-sm px-6 py-2.5 rounded-full font-bold shadow-2xl hidden pointer-events-none z-10 animate-bounce flex items-center gap-2">
+        <i class="fa-solid fa-sparkles text-amber-300"></i>
+        <span id="prompt-text">[E] 噴水の水を飲む</span>
+    </div>
+
+    <!-- Message / Story Banner Dialog -->
+    <div id="story-dialog" class="absolute bottom-6 left-4 right-4 md:left-1/2 md:-translate-x-1/2 md:max-w-xl dialog-box p-4 rounded-2xl z-20 hidden text-amber-100 flex items-start gap-3">
+        <div id="dialog-icon-box" class="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-400/50 flex items-center justify-center shrink-0 text-amber-300 text-lg">
+            <i class="fa-solid fa-paw"></i>
+        </div>
+        <div class="flex-1">
+            <div id="dialog-speaker" class="text-xs text-amber-300 font-bold mb-0.5">銀色の狐 ギン</div>
+            <div id="dialog-content" class="text-xs md:text-sm leading-relaxed text-slate-100">
+                「コンコン！きれいなお水があるよ。少し休んで喉を潤していこう！」
+            </div>
+        </div>
+        <button id="dialog-close" class="text-xs text-slate-400 hover:text-white p-1">
+            <i class="fa-solid fa-xmark text-base"></i>
+        </button>
+    </div>
+
+    <!-- Touch Mobile Controls -->
+    <div id="mobile-controls" class="absolute bottom-6 left-6 right-6 pointer-events-none hidden flex justify-between items-end z-10">
+        <!-- Movement Joystick -->
+        <div id="joystick-zone" class="w-28 h-28 md:w-32 md:h-32 bg-white/10 rounded-full border-2 border-white/20 relative pointer-events-auto touch-none flex items-center justify-center">
+            <div id="joystick-knob" class="w-10 h-10 md:w-12 md:h-12 bg-amber-500/80 rounded-full absolute shadow-xl"></div>
+        </div>
+
+        <!-- Action & Camera Control Buttons -->
+        <div class="flex flex-col gap-2 pointer-events-auto items-end">
+            <div class="flex gap-2 mb-1">
+                <button id="btn-turn-left" class="w-11 h-11 rounded-full bg-slate-900/85 border border-amber-400/60 text-amber-300 flex items-center justify-center text-lg active:scale-95 shadow-md select-none touch-none">
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
+                <button id="btn-turn-right" class="w-11 h-11 rounded-full bg-slate-900/85 border border-amber-400/60 text-amber-300 flex items-center justify-center text-lg active:scale-95 shadow-md select-none touch-none">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            </div>
+            <div class="flex gap-3">
+                <button id="btn-interact" class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-gradient-to-tr from-amber-600 to-yellow-500 border-2 border-amber-200 text-white font-bold flex flex-col items-center justify-center shadow-lg active:scale-95 select-none">
+                    <i class="fa-solid fa-hand-pointer text-base"></i>
+                    <span class="text-[9px]">調べる</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start / Title Screen Modal -->
+    <div id="start-screen" class="absolute inset-0 bg-slate-950/85 flex flex-col items-center justify-center p-4 md:p-6 text-center z-30">
+        <div class="ui-card p-6 md:p-8 rounded-3xl max-w-lg w-full border-2 border-amber-400/60 flex flex-col items-center max-h-[90vh] overflow-y-auto">
+            <div class="text-amber-400 text-xs md:text-sm font-bold tracking-widest mb-1 flex items-center gap-2">
+                <i class="fa-solid fa-feather-pointed"></i> ストーリー×宝探しアドベンチャー
+            </div>
+            <h1 class="story-title text-3xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-100 my-2">
+                石の城と光の泉
+            </h1>
+            <p class="text-amber-200/90 text-xs md:text-sm mb-5 leading-relaxed">
+                大きな石の門をくぐると、静かな中庭には美しい花々と湧き出る噴水...<br>
+                不思議な銀色の狐「ギン」と一緒に、城内に眠る宝物を探そう！
+            </p>
+
+            <div class="text-left text-xs md:text-sm text-slate-300 space-y-2 mb-6 bg-slate-900/80 p-4 rounded-2xl border border-slate-800 w-full">
+                <p class="flex items-start gap-2">
+                    <i class="fa-solid fa-shower text-blue-400 mt-1"></i>
+                    <span><b>光の噴水</b>: 噴水の澄み切ったお水を飲むと元気が湧き上がります。</span>
+                </p>
+                <p class="flex items-start gap-2">
+                    <i class="fa-solid fa-paw text-slate-300 mt-1"></i>
+                    <span><b>相棒ギン</b>: ぎんがあなたの足元についてきて、宝物の場所を教えてくれます。</span>
+                </p>
+                <p class="flex items-start gap-2">
+                    <i class="fa-solid fa-key text-yellow-400 mt-1"></i>
+                    <span><b>3つの宝玉</b>: 中庭や城の奥に隠された「太陽・星・月」の宝玉を集めて秘宝の箱を開けよう！</span>
+                </p>
+            </div>
+
+            <button id="start-btn" class="w-full py-4 bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-600 hover:from-amber-500 hover:to-yellow-400 text-slate-950 font-extrabold text-base md:text-lg rounded-2xl shadow-xl transform hover:scale-[1.02] transition duration-200 cursor-pointer flex items-center justify-center gap-2">
+                <i class="fa-solid fa-door-open"></i> 石の城へ入る
+            </button>
+        </div>
+    </div>
+
+    <!-- Game Clear Result Modal -->
+    <div id="clear-screen" class="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 text-center z-40 hidden">
+        <div class="ui-card p-8 rounded-3xl max-w-md w-full border-2 border-yellow-400/80 flex flex-col items-center">
+            <div class="w-20 h-20 rounded-full bg-yellow-500/20 border-2 border-yellow-400 flex items-center justify-center text-yellow-300 text-4xl mb-4 animate-bounce">
+                <i class="fa-solid fa-gem"></i>
+            </div>
+            <h2 class="story-title text-2xl md:text-3xl font-bold text-amber-300 mb-2">光の秘宝を発見！</h2>
+            <p id="clear-desc" class="text-slate-200 text-xs md:text-sm mb-6 leading-relaxed">
+                3つの光の宝玉がひとつになり、伝説の宝箱が開きました！<br>
+                冷たくて甘い噴水の水とぎんの導きによって、石の城の秘密が解き明かされました。
+            </p>
+            <button id="replay-btn" class="w-full py-3.5 bg-gradient-to-r from-amber-600 to-yellow-500 text-slate-950 font-bold rounded-xl shadow-lg hover:from-amber-500 transition cursor-pointer">
+                もう一度遊ぶ
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- GAME CONSTANTS & SYSTEM GLOBALS ---
+        let scene, camera, renderer;
+        let isMobile = false;
+        let gameState = 'START'; // START, PLAYING, CLEAR
+
+        // Player & Controls State
+        const keys = {};
+        let isMouseDown = false;
+        let lastMouseX = 0, lastMouseY = 0;
+        let mouseYaw = 0, mousePitch = 0;
+
+        const player = {
+            x: 0,
+            y: 1.6,
+            z: 22, // Starts outside gate
+            speed: 0.08,
+            orbs: { sun: false, star: false, moon: false }
+        };
+
+        // Fox Gin Companion
+        let ginMesh, ginTail;
+        const gin = {
+            x: 0.8,
+            z: 21,
+            angle: 0
+        };
+
+        // Audio Synth
+        let audioInit = false;
+        let synth, chimeSynth;
+
+        function initAudio() {
+            if (audioInit) return;
+            try {
+                if (typeof Tone !== 'undefined') {
+                    Tone.start();
+                    synth = new Tone.PolySynth(Tone.Synth).toDestination();
+                    synth.volume.value = -12;
+                    chimeSynth = new Tone.PolySynth(Tone.AMSynth).toDestination();
+                    chimeSynth.volume.value = -10;
+                    audioInit = true;
+                }
+            } catch(e) { console.log('Audio init skipped:', e); }
+        }
+
+        function playSound(type) {
+            if (!audioInit) return;
+            try {
+                const now = Tone.now();
+                if (type === 'drink') {
+                    synth.triggerAttackRelease("G5", "16n", now);
+                    synth.triggerAttackRelease("C6", "16n", now + 0.1);
+                    synth.triggerAttackRelease("E6", "8n", now + 0.2);
+                } else if (type === 'orb') {
+                    chimeSynth.triggerAttackRelease(["C5", "E5", "G5", "B5"], "8n", now);
+                } else if (type === 'clear') {
+                    chimeSynth.triggerAttackRelease(["C5", "E5", "G5", "C6"], "4n", now);
+                    chimeSynth.triggerAttackRelease(["D5", "F#5", "A5", "D6"], "4n", now + 0.3);
+                } else if (type === 'step') {
+                    synth.triggerAttackRelease("C2", "32n", now, 0.1);
+                }
+            } catch(e){}
+        }
+
+        // --- PROCEDURAL TEXTURES ---
+        function createProceduralTexture(type) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            if (type === 'stone') {
+                ctx.fillStyle = '#2d3342';
+                ctx.fillRect(0, 0, 512, 512);
+
+                // Stone blocks with moss
+                const brickH = 64;
+                const brickW = 128;
+                for (let y = 0; y < 512; y += brickH) {
+                    const row = Math.floor(y / brickH);
+                    const offsetX = (row % 2 === 0) ? 0 : brickW / 2;
+                    for (let x = -brickW; x < 512 + brickW; x += brickW) {
+                        ctx.strokeStyle = '#181c26';
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(x + offsetX, y, brickW, brickH);
+
+                        // Moss patches
+                        if (Math.random() < 0.35) {
+                            ctx.fillStyle = 'rgba(40, 90, 45, 0.4)';
+                            ctx.fillRect(x + offsetX + 4, y + 4, brickW - 8, brickH - 8);
+                        }
+                    }
+                }
+            } else if (type === 'grass') {
+                ctx.fillStyle = '#1e3820';
+                ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 2000; i++) {
+                    const rx = Math.random() * 512;
+                    const ry = Math.random() * 512;
+                    ctx.fillStyle = Math.random() < 0.5 ? '#2d522c' : '#3d6e3b';
+                    ctx.fillRect(rx, ry, 3, 3);
+                }
+            } else if (type === 'fountainStone') {
+                ctx.fillStyle = '#4a5568';
+                ctx.fillRect(0, 0, 512, 512);
+                // Moss overlay
+                ctx.fillStyle = 'rgba(34, 110, 55, 0.5)';
+                for (let i = 0; i < 40; i++) {
+                    ctx.beginPath();
+                    ctx.arc(Math.random()*512, Math.random()*512, 10 + Math.random()*30, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        }
+
+        let stoneTex, grassTex, fountainTex;
+        let fountainParticles = [];
+        let interactiveObjects = [];
+
+        function buildWorld() {
+            while (scene.children.length > 0) { scene.remove(scene.children[0]); }
+            interactiveObjects = [];
+            fountainParticles = [];
+
+            stoneTex = createProceduralTexture('stone');
+            stoneTex.repeat.set(4, 4);
+            grassTex = createProceduralTexture('grass');
+            grassTex.repeat.set(10, 10);
+            fountainTex = createProceduralTexture('fountainStone');
+
+            // Fog & Lighting
+            scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
+            
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xfff5ea, 0.8);
+            sunLight.position.set(10, 20, 10);
+            scene.add(sunLight);
+
+            // Ground / Courtyard Grass
+            const grassMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.9 });
+            const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), grassMat);
+            ground.rotation.x = -Math.PI / 2;
+            scene.add(ground);
+
+            // Castle Enclosing Walls (High Stone Walls)
+            const wallMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.7 });
+            
+            // Outer Walls
+            const createWall = (w, h, d, x, y, z) => {
+                const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+                wall.position.set(x, y, z);
+                scene.add(wall);
+            };
+
+            createWall(60, 8, 2, 0, 4, -25); // North wall
+            createWall(2, 8, 50, -25, 4, 0); // West wall
+            createWall(2, 8, 50, 25, 4, 0);  // East wall
+            
+            // South wall with Gate Arch
+            createWall(24, 8, 2, -18, 4, 25);
+            createWall(24, 8, 2, 18, 4, 25);
+            createWall(12, 3, 2, 0, 6.5, 25); // Gate Arch top
+
+            // Castle Front Gate Towers
+            const towerGeo = new THREE.CylinderGeometry(2.2, 2.5, 10, 12);
+            const towerMat = new THREE.MeshStandardMaterial({ map: stoneTex });
+            const towerL = new THREE.Mesh(towerGeo, towerMat); towerL.position.set(-6, 5, 25); scene.add(towerL);
+            const towerR = new THREE.Mesh(towerGeo, towerMat); towerR.position.set(6, 5, 25); scene.add(towerR);
+
+            /* --- MOSS-COVERED FOUNTAIN (Center of Courtyard) --- */
+            const fountainGroup = new THREE.Group();
+            fountainGroup.position.set(0, 0, 0);
+
+            const fMat = new THREE.MeshStandardMaterial({ map: fountainTex, roughness: 0.6 });
+            
+            // Outer Basin Base
+            const baseGeo = new THREE.CylinderGeometry(4.5, 5.0, 0.8, 16);
+            const baseMesh = new THREE.Mesh(baseGeo, fMat);
+            baseMesh.position.y = 0.4;
+            fountainGroup.add(baseMesh);
+
+            // Basin Rim Inner Pool
+            const waterGeo = new THREE.CylinderGeometry(4.0, 4.0, 0.6, 16);
+            const waterMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.75, roughness: 0.1 });
+            const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+            waterMesh.position.y = 0.55;
+            fountainGroup.add(waterMesh);
+
+            // Center Column & Upper Basin
+            const colGeo = new THREE.CylinderGeometry(0.8, 1.2, 2.5, 12);
+            const colMesh = new THREE.Mesh(colGeo, fMat);
+            colMesh.position.y = 1.65;
+            fountainGroup.add(colMesh);
+
+            const upperGeo = new THREE.CylinderGeometry(2.2, 1.8, 0.5, 16);
+            const upperMesh = new THREE.Mesh(upperGeo, fMat);
+            upperMesh.position.y = 2.8;
+            fountainGroup.add(upperMesh);
+
+            // Fountain Point Light
+            const fLight = new THREE.PointLight(0x38bdf8, 2.0, 12);
+            fLight.position.set(0, 3.2, 0);
+            fountainGroup.add(fLight);
+
+            scene.add(fountainGroup);
+
+            interactiveObjects.push({
+                type: 'fountain',
+                x: 0, z: 0, radius: 4.5
+            });
+
+            // Water Spray Particles
+            const pGeo = new THREE.SphereGeometry(0.06, 6, 6);
+            const pMat = new THREE.MeshBasicMaterial({ color: 0xbae6fd });
+            for (let i = 0; i < 45; i++) {
+                const p = new THREE.Mesh(pGeo, pMat);
+                p.position.set((Math.random() - 0.5)*0.8, 2.9, (Math.random() - 0.5)*0.8);
+                p.userData = {
+                    vx: (Math.random() - 0.5) * 0.04,
+                    vy: 0.08 + Math.random() * 0.05,
+                    vz: (Math.random() - 0.5) * 0.04,
+                    life: Math.random() * 40
+                };
+                scene.add(p);
+                fountainParticles.push(p);
+            }
+
+            /* --- FLOWER BEDS IN COURTYARD --- */
+            const flowerColors = [0xef4444, 0xf59e0b, 0xec4899, 0x8b5cf6, 0x3b82f6];
+            for (let i = 0; i < 80; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 7.0 + Math.random() * 12.0;
+                const fx = Math.cos(angle) * dist;
+                const fz = Math.sin(angle) * dist;
+
+                const fGroup = new THREE.Group();
+                const stemMesh = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.03, 0.03, 0.4, 6),
+                    new THREE.MeshStandardMaterial({ color: 0x16a34a })
+                );
+                stemMesh.position.y = 0.2;
+                fGroup.add(stemMesh);
+
+                const color = flowerColors[Math.floor(Math.random() * flowerColors.length)];
+                const petalMesh = new THREE.Mesh(
+                    new THREE.DodecahedronGeometry(0.18),
+                    new THREE.MeshStandardMaterial({ color: color })
+                );
+                petalMesh.position.y = 0.42;
+                fGroup.add(petalMesh);
+
+                fGroup.position.set(fx, 0, fz);
+                scene.add(fGroup);
+            }
+
+            /* --- TREASURE ORBS TO FIND --- */
+            // 1. Sun Orb (Near Flowers)
+            createOrb('sun', -12, 0.8, -8, 0xf59e0b);
+            // 2. Star Orb (Behind Left Castle Tower)
+            createOrb('star', -18, 0.8, 18, 0x38bdf8);
+            // 3. Moon Orb (Deep Near North Castle Gate)
+            createOrb('moon', 14, 0.8, -18, 0xc084fc);
+
+            /* --- SECRET TREASURE CHEST (Near North Wall) --- */
+            createTreasureChest(0, 0, -20);
+
+            // --- SILVER FOX GIN MODEL ---
+            const ginGroup = new THREE.Group();
+            const ginMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.5 }); // Silver fur
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x334155 }); // Dark paws/ears
+
+            // Body
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.8), ginMat);
+            body.position.y = 0.4;
+            ginGroup.add(body);
+
+            // Head & Snout
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), ginMat);
+            head.position.set(0, 0.65, 0.35);
+            ginGroup.add(head);
+
+            const snout = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 4), darkMat);
+            snout.rotation.x = Math.PI / 2;
+            snout.position.set(0, 0.6, 0.58);
+            ginGroup.add(snout);
+
+            // Pointed Ears
+            const earL = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 4), darkMat);
+            earL.position.set(-0.12, 0.88, 0.35);
+            ginGroup.add(earL);
+
+            const earR = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 4), darkMat);
+            earR.position.set(0.12, 0.88, 0.35);
+            ginGroup.add(earR);
+
+            // Fluffy Silver Tail
+            ginTail = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.18, 0.7, 8), ginMat);
+            ginTail.position.set(0, 0.45, -0.5);
+            ginTail.rotation.x = -Math.PI / 4;
+            ginGroup.add(ginTail);
+
+            ginGroup.position.set(gin.x, 0, gin.z);
+            scene.add(ginGroup);
+            ginMesh = ginGroup;
+
+            interactiveObjects.push({
+                type: 'gin',
+                x: gin.x, z: gin.z, radius: 2.0
+            });
+        }
+
+        function createOrb(id, x, y, z, hexColor) {
+            const group = new THREE.Group();
+            const geo = new THREE.SphereGeometry(0.35, 16, 16);
+            const mat = new THREE.MeshStandardMaterial({ color: hexColor, roughness: 0.2, metalness: 0.8 });
+            const mesh = new THREE.Mesh(geo, mat);
+            group.add(mesh);
+
+            const pLight = new THREE.PointLight(hexColor, 2.0, 6);
+            group.add(pLight);
+
+            group.position.set(x, y, z);
+            scene.add(group);
+
+            interactiveObjects.push({
+                type: 'orb',
+                orbId: id,
+                x: x, z: z,
+                mesh: group,
+                color: hexColor
+            });
+        }
+
+        let chestMesh, chestLight;
+        function createTreasureChest(x, y, z) {
+            const group = new THREE.Group();
+            const boxMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.6 });
+            const goldMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.9, roughness: 0.2 });
+
+            const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 0.9), boxMat);
+            base.position.y = 0.4;
+            group.add(base);
+
+            const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 1.4, 12, 1, false, 0, Math.PI), goldMat);
+            lid.rotation.z = Math.PI / 2;
+            lid.position.y = 0.8;
+            group.add(lid);
+
+            chestLight = new THREE.PointLight(0xfacc15, 0.5, 5);
+            chestLight.position.y = 1.0;
+            group.add(chestLight);
+
+            group.position.set(x, y, z);
+            scene.add(group);
+            chestMesh = group;
+
+            interactiveObjects.push({
+                type: 'chest',
+                x: x, z: z
+            });
+        }
+
+        // --- INTERACTION & DIALOG SYSTEM ---
+        function showDialog(speaker, content, iconClass = 'fa-paw') {
+            document.getElementById('dialog-speaker').innerText = speaker;
+            document.getElementById('dialog-content').innerHTML = content;
+            document.getElementById('dialog-icon-box').innerHTML = `<i class="fa-solid ${iconClass}"></i>`;
+            document.getElementById('story-dialog').classList.remove('hidden');
+        }
+
+        function checkInteractions() {
+            let promptText = '';
+            let nearObj = null;
+
+            interactiveObjects.forEach(obj => {
+                const dist = Math.hypot(player.x - obj.x, player.z - obj.z);
+                if (dist < (obj.radius || 2.2)) {
+                    nearObj = obj;
+                    if (obj.type === 'fountain') {
+                        promptText = '[E] 噴水の澄んだお水を飲む';
+                    } else if (obj.type === 'gin') {
+                        promptText = '[E] ギンをなでる（ヒントを聞く）';
+                    } else if (obj.type === 'orb' && !player.orbs[obj.orbId]) {
+                        const names = { sun: '太陽の宝玉', star: '星の宝玉', moon: '月の宝玉' };
+                        promptText = `[E] ${names[obj.orbId]}を拾う`;
+                    } else if (obj.type === 'chest') {
+                        const count = Object.values(player.orbs).filter(Boolean).length;
+                        promptText = count === 3 ? '[E] 3つの宝玉で伝説の宝箱を開ける！' : `宝箱は封印されている (宝玉: ${count}/3)`;
+                    }
+                }
+            });
+
+            const promptEl = document.getElementById('interaction-prompt');
+            if (promptText) {
+                promptEl.classList.remove('hidden');
+                document.getElementById('prompt-text').innerText = promptText;
+            } else {
+                promptEl.classList.add('hidden');
+            }
+
+            return nearObj;
+        }
+
+        function triggerInteraction() {
+            const obj = checkInteractions();
+            if (!obj) return;
+
+            if (obj.type === 'fountain') {
+                playSound('drink');
+                showDialog('ペトラ', '両手で受け止めて飲んだ水は、冷たくて驚くほど甘い！旅の疲れがすうっと消えていきました✨', 'fa-droplet');
+            } else if (obj.type === 'gin') {
+                playSound('orb');
+                const count = Object.values(player.orbs).filter(Boolean).length;
+                if (count === 0) {
+                    showDialog('銀色の狐 ギン', '「クゥン！庭園の花壇や城壁の陰に『光の宝玉』が落ちているよ。探してみよう！」', 'fa-paw');
+                } else if (count < 3) {
+                    showDialog('銀色の狐 ギン', `「順調だね！宝玉をあと ${3 - count} つ見つけよう！」`, 'fa-paw');
+                } else {
+                    showDialog('銀色の狐 ギン', '「すごい！3つの宝玉が揃ったよ！北の城壁にある大きな宝箱を開けにいこう！」', 'fa-paw');
+                }
+            } else if (obj.type === 'orb' && !player.orbs[obj.orbId]) {
+                player.orbs[obj.orbId] = true;
+                playSound('orb');
+                scene.remove(obj.mesh);
+
+                const orbElem = document.getElementById(`orb-${obj.orbId}`);
+                if (orbElem) {
+                    orbElem.className = 'w-8 h-8 rounded-full bg-amber-500 border-2 border-yellow-300 text-slate-950 text-xs flex items-center justify-center font-bold shadow-lg animate-bounce';
+                }
+
+                const names = { sun: '太陽の宝玉', star: '星の宝玉', moon: '月の宝玉' };
+                showDialog('ペトラ', `輝く<b>【${names[obj.orbId]}】</b>を手に入れた！手から温かい光が伝わってきます。`, 'fa-gem');
+
+                const count = Object.values(player.orbs).filter(Boolean).length;
+                if (count === 3) {
+                    chestLight.intensity = 3.5;
+                    chestLight.color.setHex(0xfacc15);
+                }
+            } else if (obj.type === 'chest') {
+                const count = Object.values(player.orbs).filter(Boolean).length;
+                if (count === 3) {
+                    playSound('clear');
+                    triggerGameClear();
+                } else {
+                    showDialog('ペトラ', '宝箱には3つの丸い凹みがあります。光の宝玉をすべて集める必要があるようです。', 'fa-lock');
+                }
+            }
+        }
+
+        // --- MAIN LOOP & UPDATES ---
+        function updatePlayer() {
+            if (gameState !== 'PLAYING') return;
+
+            checkInteractions();
+
+            // Keyboard/Mobile Rotation
+            if (keys['arrowleft']) mouseYaw += 0.04;
+            if (keys['arrowright']) mouseYaw -= 0.04;
+
+            let inputX = 0;
+            let inputZ = 0;
+
+            if (keys['w']) inputZ += 1;
+            if (keys['s']) inputZ -= 1;
+            if (keys['a']) inputX -= 1;
+            if (keys['d']) inputX += 1;
+
+            if (joystickActive) {
+                inputX = joystickVector.x;
+                inputZ = -joystickVector.y;
+            }
+
+            if (inputX !== 0 || inputZ !== 0) {
+                const forward = new THREE.Vector3();
+                const right = new THREE.Vector3();
+                camera.getWorldDirection(forward);
+                forward.y = 0;
+                forward.normalize();
+
+                right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+                const move = new THREE.Vector3();
+                move.addScaledVector(forward, inputZ);
+                move.addScaledVector(right, inputX);
+                move.multiplyScalar(player.speed);
+
+                // Simple Boundary Limits (-23 to 23)
+                if (Math.abs(player.x + move.x) < 23) player.x += move.x;
+                if (Math.abs(player.z + move.z) < 23) player.z += move.z;
+            }
+
+            camera.position.set(player.x, player.y, player.z);
+            camera.rotation.order = 'YXZ';
+            camera.rotation.y = mouseYaw;
+            camera.rotation.x = mousePitch;
+
+            // Update Companion Fox Gin Position (Follows Player smoothly)
+            const targetGinX = player.x + Math.sin(mouseYaw + 0.8) * 1.5;
+            const targetGinZ = player.z - Math.cos(mouseYaw + 0.8) * 1.5;
+
+            gin.x += (targetGinX - gin.x) * 0.08;
+            gin.z += (targetGinZ - gin.z) * 0.08;
+
+            if (ginMesh) {
+                ginMesh.position.set(gin.x, 0, gin.z);
+                const ginAngle = Math.atan2(player.x - gin.x, player.z - gin.z);
+                ginMesh.rotation.y = ginAngle;
+
+                // Wag tail
+                if (ginTail) {
+                    ginTail.rotation.z = Math.sin(Date.now() * 0.01) * 0.25;
+                }
+            }
+
+            // Animate Fountain Particles
+            fountainParticles.forEach(p => {
+                p.position.x += p.userData.vx;
+                p.position.y += p.userData.vy;
+                p.position.z += p.userData.vz;
+                p.userData.vy -= 0.003; // gravity
+
+                if (p.position.y < 0.6) {
+                    p.position.set((Math.random() - 0.5)*0.8, 2.8, (Math.random() - 0.5)*0.8);
+                    p.userData.vy = 0.08 + Math.random() * 0.04;
+                }
+            });
+        }
+
+        function gameLoop() {
+            updatePlayer();
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- CONTROLS SETUP ---
+        let joystickActive = false;
+        let joystickVector = { x: 0, y: 0 };
+
+        function setupControls() {
+            window.addEventListener('keydown', (e) => {
+                keys[e.key.toLowerCase()] = true;
+                if (e.key.toLowerCase() === 'e') triggerInteraction();
+            });
+            window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+            window.addEventListener('mousedown', (e) => {
+                if (e.target.closest('#mobile-controls') || e.target.closest('#hud') || e.target.closest('#start-screen') || e.target.closest('#clear-screen') || e.target.closest('#story-dialog')) return;
+                isMouseDown = true;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+            });
+            window.addEventListener('mouseup', () => { isMouseDown = false; });
+
+            document.addEventListener('mousemove', (e) => {
+                if (gameState !== 'PLAYING' || !isMouseDown) return;
+                const dx = e.clientX - lastMouseX;
+                const dy = e.clientY - lastMouseY;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+
+                mouseYaw -= dx * 0.005;
+                mousePitch -= dy * 0.005;
+                mousePitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, mousePitch));
+            });
+
+            document.getElementById('dialog-close').addEventListener('click', () => {
+                document.getElementById('story-dialog').classList.add('hidden');
+            });
+        }
+
+        function setupMobileUI() {
+            isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+            if (isMobile) {
+                document.getElementById('mobile-controls').classList.remove('hidden');
+            }
+
+            const zone = document.getElementById('joystick-zone');
+            const knob = document.getElementById('joystick-knob');
+
+            zone.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                joystickActive = true;
+                updateJoystick(e.touches[0]);
+            });
+            zone.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (joystickActive) updateJoystick(e.touches[0]);
+            });
+            zone.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                joystickActive = false;
+                joystickVector = { x: 0, y: 0 };
+                knob.style.transform = 'translate(0px, 0px)';
+            });
+
+            function updateJoystick(touch) {
+                const rect = zone.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                let dx = touch.clientX - centerX;
+                let dy = touch.clientY - centerY;
+                const dist = Math.hypot(dx, dy);
+                const maxDist = rect.width / 2 - 15;
+
+                if (dist > maxDist) {
+                    dx = (dx / dist) * maxDist;
+                    dy = (dy / dist) * maxDist;
+                }
+                knob.style.transform = `translate(${dx}px, ${dy}px)`;
+                joystickVector = { x: dx / maxDist, y: dy / maxDist };
+            }
+
+            document.getElementById('btn-interact').addEventListener('click', triggerInteraction);
+        }
+
+        function init3D() {
+            const container = document.getElementById('canvas-container');
+            const width = Math.max(container.clientWidth || window.innerWidth || 800, 100);
+            const height = Math.max(container.clientHeight || window.innerHeight || 600, 100);
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(70, width / height, 0.1, 1000);
+            camera.position.set(player.x, player.y, player.z);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            while (container.firstChild) container.removeChild(container.firstChild);
+            container.appendChild(renderer.domElement);
+
+            const handleResize = () => {
+                const w = Math.max(container.clientWidth || window.innerWidth || 800, 100);
+                const h = Math.max(container.clientHeight || window.innerHeight || 600, 100);
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            };
+
+            window.addEventListener('resize', handleResize);
+        }
+
+        function startGame() {
+            initAudio();
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('hud').classList.remove('hidden');
+
+            player.x = 0; player.z = 22;
+            player.orbs = { sun: false, star: false, moon: false };
+            ['sun', 'star', 'moon'].forEach(id => {
+                const elem = document.getElementById(`orb-${id}`);
+                if (elem) elem.className = 'w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-gray-600 text-xs transition-all';
+            });
+
+            buildWorld();
+            gameState = 'PLAYING';
+
+            showDialog('銀色の狐 ギン', '「城の中庭へようこそ！喉が渇いたら中央の石造りの噴水でお水を飲んでね！」', 'fa-paw');
+        }
+
+        function triggerGameClear() {
+            gameState = 'CLEAR';
+            document.getElementById('clear-screen').classList.remove('hidden');
+        }
+
+        function initApp() {
+            init3D();
+            setupControls();
+            setupMobileUI();
+            buildWorld();
+
+            document.getElementById('start-btn').addEventListener('click', startGame);
+            document.getElementById('replay-btn').addEventListener('click', () => {
+                document.getElementById('clear-screen').classList.add('hidden');
+                startGame();
+            });
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            setTimeout(initApp, 10);
+        } else {
+            window.addEventListener('DOMContentLoaded', initApp);
+        }
+    </script>
+</body>
+</html>

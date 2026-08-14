@@ -28,6 +28,9 @@
 
 	- jelly_pop/instructions.md
 
+- catsle_adv/
+城を舞台にしたアドベンチャーゲーム
+
 - 3d_rpg
 80年代にあったダンジョンマスター風の3DのRPGのリメイク
 
