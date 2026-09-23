@@ -1,0 +1,11 @@
+Model Information:
+* title:	Frostbone Keep
+* source:	https://sketchfab.com/3d-models/frostbone-keep-8113bd35423b4bae9d24a65fa225f15f
+* author:	patrix (https://sketchfab.com/patrix)
+
+Model License:
+* license type:	CC-BY-SA-4.0 (http://creativecommons.org/licenses/by-sa/4.0/)
+* requirements:	Author must be credited. Modified versions must have the same license. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Frostbone Keep" (https://sketchfab.com/3d-models/frostbone-keep-8113bd35423b4bae9d24a65fa225f15f) by patrix (https://sketchfab.com/patrix) licensed under CC-BY-SA-4.0 (http://creativecommons.org/licenses/by-sa/4.0/)

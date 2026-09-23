@@ -30,6 +30,7 @@
 
 - catsle_adv/
 城を舞台にしたアドベンチャーゲーム
+	- catsle_adv/instructions/main.md
 
 - 3d_rpg
 80年代にあったダンジョンマスター風の3DのRPGのリメイク

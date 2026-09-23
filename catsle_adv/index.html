@@ -8,10 +8,22 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Three.js for 3D Graphics -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
     <!-- Tone.js for Sound Effects -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <script src="./js/core/Config.js"></script>
+    <script src="./js/core/GameState.js"></script>
+    <script src="./js/core/EventBus.js"></script>
+    <script src="./js/core/GameApp.js"></script>
+    <script src="./js/input/InputManager.js"></script>
+    <script src="./js/player/PlayerController.js"></script>
+    <script src="./js/world/InteractableRegistry.js"></script>
+    <script src="./js/world/WorldLoader.js"></script>
+    <script src="./js/quests/QuestManager.js"></script>
+    <script src="./js/ui/UIController.js"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&family=Yuji+Mai&display=swap');
@@ -84,10 +96,10 @@
         <div class="ui-card p-3 rounded-2xl flex flex-col gap-1 pointer-events-auto max-w-[280px] md:max-w-xs">
             <div class="text-xs text-amber-300 font-bold tracking-wider flex items-center gap-2">
                 <i class="fa-solid fa-map-location-dot text-amber-400"></i>
-                <span id="location-name">石の城：静寂の中庭</span>
+                <span id="location-name">石の城：正門前</span>
             </div>
             <div class="text-xs text-slate-200 mt-0.5 leading-relaxed" id="objective-text">
-                銀色の狐ギンと一緒に、庭園と城に隠された<b>3つの『光の宝玉』</b>を探そう！
+                まずは正門の<b>鉄の門</b>を自分で開けて、中庭へ入ろう。
             </div>
         </div>
 
@@ -168,11 +180,15 @@
                 石の城と光の泉
             </h1>
             <p class="text-amber-200/90 text-xs md:text-sm mb-5 leading-relaxed">
-                大きな石の門をくぐると、静かな中庭には美しい花々と湧き出る噴水...<br>
-                不思議な銀色の狐「ギン」と一緒に、城内に眠る宝物を探そう！
+                まずは門前に立ち、重たい鉄の門を自分の手で開けるところから冒険が始まる。<br>
+                門と城の間には、色とりどりの花が咲き、庭がまるで虹のように彩られた中庭が広がっている。中央の噴水には不思議な模様が刻まれている。
             </p>
 
             <div class="text-left text-xs md:text-sm text-slate-300 space-y-2 mb-6 bg-slate-900/80 p-4 rounded-2xl border border-slate-800 w-full">
+                <p class="flex items-start gap-2">
+                    <i class="fa-solid fa-door-closed text-slate-300 mt-1"></i>
+                    <span><b>鉄の正門</b>: 見張りのモンスターはいません。自分の手で門を開けて城へ入ろう。</span>
+                </p>
                 <p class="flex items-start gap-2">
                     <i class="fa-solid fa-shower text-blue-400 mt-1"></i>
                     <span><b>光の噴水</b>: 噴水の澄み切ったお水を飲むと元気が湧き上がります。</span>
@@ -234,7 +250,7 @@
         const player = {
             x: 0,
             y: 1.6,
-            z: 22, // Starts outside gate
+            z: 18, // Starts at the castle gate
             speed: 0.08,
             orbs: { sun: false, star: false, moon: false }
         };
@@ -243,7 +259,7 @@
         let ginMesh, ginTail;
         const gin = {
             x: 0.8,
-            z: 21,
+            z: 15.5,
             angle: 0
         };
 
@@ -342,11 +358,74 @@
         let stoneTex, grassTex, fountainTex;
         let fountainParticles = [];
         let interactiveObjects = [];
+        let castleModel = null;
+        window.__castleLoaded = false;
+        let gateLeftPivot, gateRightPivot;
+        let gateIsOpen = false;
+        let gateOpening = false;
+        let gateOpenProgress = 0;
+
+        function canMoveTo(nx, nz) {
+            // The imported castle wall model sets the outer boundary. Keep the walkable space
+            // just inside the model so the walls sit just beyond the limit.
+            if (Math.abs(nx) > 27 || nz < -22 || nz > 28) return false;
+
+            // Front gate is the only blocked zone until opened.
+            const onGate = nz > 14 && nz < 20 && Math.abs(nx) < 6;
+            if (onGate && !gateIsOpen) return false;
+
+            return true;
+        }
+
+        function loadCastleModel() {
+            if (!scene || castleModel) return;
+
+            const castleUrl = new URL('../models/castle_adv/castle_wall.gltf', window.location.href).href;
+            const loader = new THREE.GLTFLoader();
+
+            loader.load(
+                castleUrl,
+                (gltf) => {
+                    const model = gltf.scene;
+                    model.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+
+                            const name = (child.name || '').toLowerCase();
+                            const isGroundLike = (name.includes('ground') || name.includes('bridge') || name.includes('path')) && !name.includes('gate');
+                            if (isGroundLike && child.material && child.material.color) {
+                                child.material = child.material.clone();
+                                child.material.color.setHex(0x2f7d4a);
+                            }
+                        }
+                    });
+
+                    model.position.set(0, 0, -10);
+                    model.rotation.y = Math.PI;
+                    model.scale.set(2.00, 2.00, 2.00);
+                    scene.add(model);
+                    castleModel = model;
+                    window.__castleLoaded = true;
+                },
+                undefined,
+                (error) => {
+                    console.error('Failed to load castle wall model:', error);
+                }
+            );
+        }
 
         function buildWorld() {
             while (scene.children.length > 0) { scene.remove(scene.children[0]); }
             interactiveObjects = [];
             fountainParticles = [];
+            castleModel = null;
+            window.__castleLoaded = false;
+            gateLeftPivot = null;
+            gateRightPivot = null;
+            gateIsOpen = false;
+            gateOpening = false;
+            gateOpenProgress = 0;
 
             stoneTex = createProceduralTexture('stone');
             stoneTex.repeat.set(4, 4);
@@ -355,47 +434,53 @@
             fountainTex = createProceduralTexture('fountainStone');
 
             // Fog & Lighting
-            scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
+            scene.background = new THREE.Color(0x030712);
+            scene.fog = new THREE.FogExp2(0x030712, 0.025);
             
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
             scene.add(ambientLight);
 
-            const sunLight = new THREE.DirectionalLight(0xfff5ea, 0.8);
+            const sunLight = new THREE.DirectionalLight(0xfff5ea, 1.2);
             sunLight.position.set(10, 20, 10);
             scene.add(sunLight);
 
-            // Ground / Courtyard Grass
-            const grassMat = new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.9 });
-            const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), grassMat);
-            ground.rotation.x = -Math.PI / 2;
-            scene.add(ground);
+            // The imported castle_wall model is the field itself.
+            // No outer wall or floor meshes are built here; the wall model provides the architecture.
 
-            // Castle Enclosing Walls (High Stone Walls)
-            const wallMat = new THREE.MeshStandardMaterial({ map: stoneTex, roughness: 0.7 });
-            
-            // Outer Walls
-            const createWall = (w, h, d, x, y, z) => {
-                const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
-                wall.position.set(x, y, z);
-                scene.add(wall);
+            // Iron gate leaves in the center arch at the front of the keep (closed at start).
+            const gateMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, metalness: 0.9, roughness: 0.25 });
+            const createGateLeaf = (leftSide) => {
+                const leafGroup = new THREE.Group();
+                const frame = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3.8, 5.8), gateMat);
+                frame.position.set(leftSide ? 0.1 : -0.1, 2.1, 0);
+                leafGroup.add(frame);
+
+                for (let i = 0; i < 5; i++) {
+                    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.4, 8), gateMat);
+                    bar.position.set(leftSide ? 0.28 : -0.28, 2.1, -2.1 + i * 1.05);
+                    leafGroup.add(bar);
+                }
+
+                const strap = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 5.6), gateMat);
+                strap.position.set(leftSide ? 0.24 : -0.24, 2.1, 0);
+                leafGroup.add(strap);
+
+                return leafGroup;
             };
 
-            createWall(60, 8, 2, 0, 4, -25); // North wall
-            createWall(2, 8, 50, -25, 4, 0); // West wall
-            createWall(2, 8, 50, 25, 4, 0);  // East wall
-            
-            // South wall with Gate Arch
-            createWall(24, 8, 2, -18, 4, 25);
-            createWall(24, 8, 2, 18, 4, 25);
-            createWall(12, 3, 2, 0, 6.5, 25); // Gate Arch top
+            gateLeftPivot = new THREE.Group();
+            gateLeftPivot.position.set(-0.1, 0, 18);
+            gateLeftPivot.add(createGateLeaf(true));
+            scene.add(gateLeftPivot);
 
-            // Castle Front Gate Towers
-            const towerGeo = new THREE.CylinderGeometry(2.2, 2.5, 10, 12);
-            const towerMat = new THREE.MeshStandardMaterial({ map: stoneTex });
-            const towerL = new THREE.Mesh(towerGeo, towerMat); towerL.position.set(-6, 5, 25); scene.add(towerL);
-            const towerR = new THREE.Mesh(towerGeo, towerMat); towerR.position.set(6, 5, 25); scene.add(towerR);
+            gateRightPivot = new THREE.Group();
+            gateRightPivot.position.set(0.1, 0, 18);
+            gateRightPivot.add(createGateLeaf(false));
+            scene.add(gateRightPivot);
 
-            /* --- MOSS-COVERED FOUNTAIN (Center of Courtyard) --- */
+            loadCastleModel();
+
+            /* --- FOUNTAIN RELOCATED INSIDE THE CASTLE MODEL --- */
             const fountainGroup = new THREE.Group();
             fountainGroup.position.set(0, 0, 0);
 
@@ -430,11 +515,31 @@
             fLight.position.set(0, 3.2, 0);
             fountainGroup.add(fLight);
 
+            // Mysterious engraved pattern around the fountain basin.
+            const patternMat = new THREE.MeshStandardMaterial({ color: 0xf8e7a3, emissive: 0x8be9fd, emissiveIntensity: 0.24, roughness: 0.35, metalness: 0.8 });
+            const patternRing = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.09, 8, 32), patternMat);
+            patternRing.rotation.x = Math.PI / 2;
+            patternRing.position.y = 0.8;
+            fountainGroup.add(patternRing);
+
+            for (let i = 0; i < 8; i++) {
+                const glyph = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.5, 5), patternMat);
+                glyph.rotation.x = Math.PI / 2;
+                glyph.position.set(Math.cos(i / 8 * Math.PI * 2) * 2.1, 0.82, Math.sin(i / 8 * Math.PI * 2) * 2.1);
+                glyph.rotation.z = i * (Math.PI / 4);
+                fountainGroup.add(glyph);
+            }
+
             scene.add(fountainGroup);
 
             interactiveObjects.push({
                 type: 'fountain',
                 x: 0, z: 0, radius: 4.5
+            });
+
+            interactiveObjects.push({
+                type: 'gate',
+                x: 0, z: 18.5, radius: 4.2
             });
 
             // Water Spray Particles
@@ -453,44 +558,48 @@
                 fountainParticles.push(p);
             }
 
-            /* --- FLOWER BEDS IN COURTYARD --- */
-            const flowerColors = [0xef4444, 0xf59e0b, 0xec4899, 0x8b5cf6, 0x3b82f6];
-            for (let i = 0; i < 80; i++) {
+            /* --- FLOWER GARDEN INSIDE THE CASTLE MODEL --- */
+            const flowerColors = [0xef4444, 0xf59e0b, 0xec4899, 0x8b5cf6, 0x3b82f6, 0x22c55e, 0xf472b6, 0xffffff];
+            for (let i = 0; i < 120; i++) {
                 const angle = Math.random() * Math.PI * 2;
-                const dist = 7.0 + Math.random() * 12.0;
+                const dist = 2.0 + Math.random() * 14.0;
                 const fx = Math.cos(angle) * dist;
                 const fz = Math.sin(angle) * dist;
 
                 const fGroup = new THREE.Group();
                 const stemMesh = new THREE.Mesh(
-                    new THREE.CylinderGeometry(0.03, 0.03, 0.4, 6),
-                    new THREE.MeshStandardMaterial({ color: 0x16a34a })
+                    new THREE.CylinderGeometry(0.025, 0.025, 0.4 + Math.random() * 0.25, 6),
+                    new THREE.MeshStandardMaterial({ color: 0x15803d })
                 );
-                stemMesh.position.y = 0.2;
+                stemMesh.position.y = 0.22;
                 fGroup.add(stemMesh);
 
                 const color = flowerColors[Math.floor(Math.random() * flowerColors.length)];
                 const petalMesh = new THREE.Mesh(
-                    new THREE.DodecahedronGeometry(0.18),
-                    new THREE.MeshStandardMaterial({ color: color })
+                    new THREE.DodecahedronGeometry(0.12 + Math.random() * 0.12),
+                    new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 0.05 })
                 );
-                petalMesh.position.y = 0.42;
+                petalMesh.position.y = 0.48;
                 fGroup.add(petalMesh);
+
+                const bloom = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.05 + Math.random() * 0.06, 8, 8),
+                    new THREE.MeshStandardMaterial({ color: 0xfef3c7, emissive: 0xfef3c7, emissiveIntensity: 0.12 })
+                );
+                bloom.position.y = 0.64;
+                fGroup.add(bloom);
 
                 fGroup.position.set(fx, 0, fz);
                 scene.add(fGroup);
             }
 
-            /* --- TREASURE ORBS TO FIND --- */
-            // 1. Sun Orb (Near Flowers)
-            createOrb('sun', -12, 0.8, -8, 0xf59e0b);
-            // 2. Star Orb (Behind Left Castle Tower)
-            createOrb('star', -18, 0.8, 18, 0x38bdf8);
-            // 3. Moon Orb (Deep Near North Castle Gate)
-            createOrb('moon', 14, 0.8, -18, 0xc084fc);
+            /* --- TREASURE ORBS INSIDE THE KEEP --- */
+            createOrb('sun', -10, 0.8, 2, 0xf59e0b);
+            createOrb('star', -12, 0.8, -10, 0x38bdf8);
+            createOrb('moon', 12, 0.8, -8, 0xc084fc);
 
-            /* --- SECRET TREASURE CHEST (Near North Wall) --- */
-            createTreasureChest(0, 0, -20);
+            /* --- SECRET TREASURE CHEST INSIDE THE KEEP --- */
+            createTreasureChest(0, 0, -12);
 
             // --- SILVER FOX GIN MODEL ---
             const ginGroup = new THREE.Group();
@@ -597,26 +706,39 @@
         }
 
         function checkInteractions() {
+            const registry = window.__castleWorldLoader && window.__castleWorldLoader.registry;
             let promptText = '';
             let nearObj = null;
 
-            interactiveObjects.forEach(obj => {
-                const dist = Math.hypot(player.x - obj.x, player.z - obj.z);
-                if (dist < (obj.radius || 2.2)) {
-                    nearObj = obj;
-                    if (obj.type === 'fountain') {
-                        promptText = '[E] 噴水の澄んだお水を飲む';
-                    } else if (obj.type === 'gin') {
-                        promptText = '[E] ギンをなでる（ヒントを聞く）';
-                    } else if (obj.type === 'orb' && !player.orbs[obj.orbId]) {
-                        const names = { sun: '太陽の宝玉', star: '星の宝玉', moon: '月の宝玉' };
-                        promptText = `[E] ${names[obj.orbId]}を拾う`;
-                    } else if (obj.type === 'chest') {
-                        const count = Object.values(player.orbs).filter(Boolean).length;
-                        promptText = count === 3 ? '[E] 3つの宝玉で伝説の宝箱を開ける！' : `宝箱は封印されている (宝玉: ${count}/3)`;
-                    }
+            if (registry && registry.items && registry.items.length) {
+                nearObj = registry.findNearby(player.x, player.z);
+                if (nearObj) {
+                    const promptState = {
+                        orbs: (window.__castleEditorState && window.__castleEditorState.get('player.orbs', player.orbs)) || player.orbs
+                    };
+                    promptText = registry.getPromptText(promptState, nearObj);
                 }
-            });
+            } else {
+                interactiveObjects.forEach(obj => {
+                    const dist = Math.hypot(player.x - obj.x, player.z - obj.z);
+                    if (dist < (obj.radius || 2.2)) {
+                        nearObj = obj;
+                        if (obj.type === 'gate') {
+                            promptText = gateIsOpen ? '門は開いている。中庭へ進もう' : '[E] 鉄の門を開ける';
+                        } else if (obj.type === 'fountain') {
+                            promptText = '[E] 噴水の澄んだお水を飲む';
+                        } else if (obj.type === 'gin') {
+                            promptText = '[E] ギンをなでる（ヒントを聞く）';
+                        } else if (obj.type === 'orb' && !player.orbs[obj.orbId]) {
+                            const names = { sun: '太陽の宝玉', star: '星の宝玉', moon: '月の宝玉' };
+                            promptText = `[E] ${names[obj.orbId]}を拾う`;
+                        } else if (obj.type === 'chest') {
+                            const count = Object.values(player.orbs).filter(Boolean).length;
+                            promptText = count === 3 ? '[E] 3つの宝玉で伝説の宝箱を開ける！' : `宝箱は封印されている (宝玉: ${count}/3)`;
+                        }
+                    }
+                });
+            }
 
             const promptEl = document.getElementById('interaction-prompt');
             if (promptText) {
@@ -626,6 +748,10 @@
                 promptEl.classList.add('hidden');
             }
 
+            if (window.__castleUIController) {
+                window.__castleUIController.setInteractionPrompt(promptText);
+            }
+
             return nearObj;
         }
 
@@ -633,9 +759,28 @@
             const obj = checkInteractions();
             if (!obj) return;
 
-            if (obj.type === 'fountain') {
+            if (obj.type === 'gate') {
+                if (!gateIsOpen && !gateOpening) {
+                    gateOpening = true;
+                    if (window.__castleEventBus) {
+                        window.__castleEventBus.emit('gate.opened', { by: 'player' });
+                    }
+                    if (window.__castleQuestManager) {
+                        window.__castleQuestManager.handleGateOpened();
+                    }
+                    if (window.__castleQuestManager && window.__castleUIController) {
+                        window.__castleQuestManager.syncUI(window.__castleUIController);
+                    }
+                    playSound('orb');
+                    document.getElementById('location-name').innerText = '石の城：花の中庭';
+                    document.getElementById('objective-text').innerHTML = '門と城の間に広がる<b>色とりどりの花園</b>を抜け、中央の噴水の前で宝玉を探そう。';
+                    showDialog('ペトラ', '重い鉄の門を押し開けた。軋む音の向こうには、花が咲き乱れる色鮮やかな中庭が広がっていた。', 'fa-door-open');
+                } else {
+                    showDialog('ペトラ', '見張りのモンスターはいない。今のうちに中庭へ進もう。', 'fa-shield');
+                }
+            } else if (obj.type === 'fountain') {
                 playSound('drink');
-                showDialog('ペトラ', '両手で受け止めて飲んだ水は、冷たくて驚くほど甘い！旅の疲れがすうっと消えていきました✨', 'fa-droplet');
+                showDialog('ペトラ', '両手で受け止めて飲んだ水は、冷たくて驚くほど甘い！全身に力が戻り、体力がすべて回復した✨', 'fa-droplet');
             } else if (obj.type === 'gin') {
                 playSound('orb');
                 const count = Object.values(player.orbs).filter(Boolean).length;
@@ -648,8 +793,20 @@
                 }
             } else if (obj.type === 'orb' && !player.orbs[obj.orbId]) {
                 player.orbs[obj.orbId] = true;
+                if (window.__castleEditorState) {
+                    const orbState = { ...(window.__castleEditorState.get('player.orbs', player.orbs) || player.orbs) };
+                    orbState[obj.orbId] = true;
+                    window.__castleEditorState.set('player.orbs', orbState);
+                    window.__castleEditorState.set('inventory.orbs', orbState);
+                }
+                if (window.__castleEventBus) {
+                    window.__castleEventBus.emit('orb.collected', { orbId: obj.orbId });
+                }
+                if (window.__castleQuestManager) {
+                    window.__castleQuestManager.handleOrbCollected({ orbId: obj.orbId });
+                }
                 playSound('orb');
-                scene.remove(obj.mesh);
+                if (obj.mesh) scene.remove(obj.mesh);
 
                 const orbElem = document.getElementById(`orb-${obj.orbId}`);
                 if (orbElem) {
@@ -659,14 +816,26 @@
                 const names = { sun: '太陽の宝玉', star: '星の宝玉', moon: '月の宝玉' };
                 showDialog('ペトラ', `輝く<b>【${names[obj.orbId]}】</b>を手に入れた！手から温かい光が伝わってきます。`, 'fa-gem');
 
+                if (window.__castleQuestManager && window.__castleUIController) {
+                    window.__castleQuestManager.syncUI(window.__castleUIController);
+                }
+
                 const count = Object.values(player.orbs).filter(Boolean).length;
                 if (count === 3) {
-                    chestLight.intensity = 3.5;
-                    chestLight.color.setHex(0xfacc15);
+                    if (chestLight) {
+                        chestLight.intensity = 3.5;
+                        chestLight.color.setHex(0xfacc15);
+                    }
                 }
             } else if (obj.type === 'chest') {
                 const count = Object.values(player.orbs).filter(Boolean).length;
                 if (count === 3) {
+                    if (window.__castleEventBus) {
+                        window.__castleEventBus.emit('chest.opened', { by: 'player' });
+                    }
+                    if (window.__castleQuestManager) {
+                        window.__castleQuestManager.handleChestOpened();
+                    }
                     playSound('clear');
                     triggerGameClear();
                 } else {
@@ -712,9 +881,12 @@
                 move.addScaledVector(right, inputX);
                 move.multiplyScalar(player.speed);
 
-                // Simple Boundary Limits (-23 to 23)
-                if (Math.abs(player.x + move.x) < 23) player.x += move.x;
-                if (Math.abs(player.z + move.z) < 23) player.z += move.z;
+                const nextX = player.x + move.x;
+                const nextZ = player.z + move.z;
+                if (canMoveTo(nextX, nextZ)) {
+                    player.x = nextX;
+                    player.z = nextZ;
+                }
             }
 
             camera.position.set(player.x, player.y, player.z);
@@ -752,10 +924,46 @@
                     p.userData.vy = 0.08 + Math.random() * 0.04;
                 }
             });
+
+            // Gate opening swing animation.
+            if (gateOpening && gateLeftPivot && gateRightPivot) {
+                gateOpenProgress = Math.min(1, gateOpenProgress + 0.02);
+                const openAngle = gateOpenProgress * (Math.PI / 2.8);
+                gateLeftPivot.rotation.y = -openAngle;
+                gateRightPivot.rotation.y = openAngle;
+                if (gateOpenProgress >= 1) {
+                    gateOpening = false;
+                    gateIsOpen = true;
+                }
+            }
         }
 
         function gameLoop() {
-            updatePlayer();
+            if (window.__castleGameApp && gameState === 'PLAYING') {
+                const result = window.__castleGameApp.updateFrame({
+                    keys,
+                    joystickVector,
+                    joystickActive
+                });
+
+                if (result) {
+                    player.x = result.player.x;
+                    player.y = result.player.y;
+                    player.z = result.player.z;
+                    mouseYaw = result.mouseYaw;
+                    mousePitch = result.mousePitch;
+                }
+
+                if (window.__castleEditorState) {
+                    window.__castleEditorState.set('player.x', player.x);
+                    window.__castleEditorState.set('player.z', player.z);
+                    window.__castleEditorState.set('camera.yaw', mouseYaw);
+                    window.__castleEditorState.set('camera.pitch', mousePitch);
+                }
+            } else {
+                updatePlayer();
+            }
+
             if (renderer && scene && camera) {
                 renderer.render(scene, camera);
             }
@@ -952,21 +1160,115 @@
             document.getElementById('start-screen').classList.add('hidden');
             document.getElementById('hud').classList.remove('hidden');
 
-            player.x = 0; player.z = 22;
+            if (!window.__castleEditorState) {
+                window.__castleEditorState = new GameState();
+            }
+            if (!window.__castleEventBus) {
+                window.__castleEventBus = new EventBus();
+            }
+            if (!window.__castleInputManager) {
+                window.__castleInputManager = new InputManager({ eventBus: window.__castleEventBus });
+            }
+            if (!window.__castlePlayerController) {
+                window.__castlePlayerController = new PlayerController({
+                    state: window.__castleEditorState,
+                    eventBus: window.__castleEventBus,
+                    config: CASTLE_CONFIG
+                });
+            }
+            if (!window.__castleUIController) {
+                window.__castleUIController = new UIController({
+                    state: window.__castleEditorState,
+                    eventBus: window.__castleEventBus
+                });
+            }
+            if (!window.__castleQuestManager) {
+                window.__castleQuestManager = new QuestManager({
+                    state: window.__castleEditorState,
+                    eventBus: window.__castleEventBus,
+                    config: CASTLE_CONFIG
+                });
+            }
+            if (!window.__castleWorldLoader) {
+                window.__castleWorldLoader = new WorldLoader({
+                    state: window.__castleEditorState,
+                    eventBus: window.__castleEventBus,
+                    config: CASTLE_CONFIG
+                });
+            }
+
+            window.__castleEditorState.reset();
+            window.__castleEventBus = new EventBus();
+            window.__castleInputManager = new InputManager({ eventBus: window.__castleEventBus });
+            window.__castlePlayerController = new PlayerController({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                config: CASTLE_CONFIG
+            });
+            window.__castleQuestManager = new QuestManager({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                config: CASTLE_CONFIG
+            });
+            window.__castleUIController = new UIController({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus
+            });
+            window.__castleWorldLoader = new WorldLoader({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                config: CASTLE_CONFIG
+            });
+
+            window.__castleGameApp = new GameApp({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                inputManager: window.__castleInputManager,
+                playerController: window.__castlePlayerController,
+                config: CASTLE_CONFIG
+            });
+            window.__castleGameApp.bindWindow(window);
+
+            player.x = 0;
+            player.z = 18;
+            mouseYaw = Math.PI;
+            mousePitch = 0;
             player.orbs = { sun: false, star: false, moon: false };
+            window.__castleEditorState.set('player.x', 0);
+            window.__castleEditorState.set('player.z', 18);
+            window.__castleEditorState.set('player.orbs', { sun: false, star: false, moon: false });
+            window.__castleEditorState.set('world.gateOpened', false);
+            window.__castleEditorState.set('world.currentArea', 'front_gate');
+            window.__castleEditorState.set('ui.locationName', '石の城：正門前');
+            window.__castleEditorState.set('ui.objectiveText', 'まずは正門の<b>鉄の門</b>を自分で開けて、中庭へ入ろう。');
+
             ['sun', 'star', 'moon'].forEach(id => {
                 const elem = document.getElementById(`orb-${id}`);
                 if (elem) elem.className = 'w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-gray-600 text-xs transition-all';
             });
 
             buildWorld();
+            if (window.__castleWorldLoader && interactiveObjects.length) {
+                window.__castleWorldLoader.bindRegistry(interactiveObjects);
+            }
+            window.__castleQuestManager.syncUI(window.__castleUIController);
+            window.__castleUIController.updateObjective(
+                '石の城：正門前',
+                'まずは正門の<b>鉄の門</b>を自分で開けて、中庭へ入ろう。'
+            );
             gameState = 'PLAYING';
 
-            showDialog('銀色の狐 ギン', '「城の中庭へようこそ！喉が渇いたら中央の石造りの噴水でお水を飲んでね！」', 'fa-paw');
+            showDialog('銀色の狐 ギン', '「見張りのモンスターはいないよ。まずは目の前の鉄の門を開けて、中庭へ入ろう！」', 'fa-paw');
         }
 
         function triggerGameClear() {
             gameState = 'CLEAR';
+            if (window.__castleEventBus) {
+                window.__castleEventBus.emit('quest.completed', { questId: 'castle_clear' });
+            }
+            if (window.__castleUIController) {
+                window.__castleUIController.updateObjective('石の城：秘宝の間', '宝箱を開いて、光の泉の秘密を手に入れた！');
+            }
             document.getElementById('clear-screen').classList.remove('hidden');
         }
 
@@ -974,7 +1276,43 @@
             init3D();
             setupControls();
             setupMobileUI();
+
+            window.__castleEditorState = new GameState();
+            window.__castleEventBus = new EventBus();
+            window.__castleInputManager = new InputManager({ eventBus: window.__castleEventBus });
+            window.__castlePlayerController = new PlayerController({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                config: CASTLE_CONFIG
+            });
+            window.__castleUIController = new UIController({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus
+            });
+            window.__castleQuestManager = new QuestManager({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                config: CASTLE_CONFIG
+            });
+            window.__castleWorldLoader = new WorldLoader({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                config: CASTLE_CONFIG
+            });
+
             buildWorld();
+            if (window.__castleWorldLoader && interactiveObjects.length) {
+                window.__castleWorldLoader.bindRegistry(interactiveObjects);
+            }
+
+            window.__castleGameApp = new GameApp({
+                state: window.__castleEditorState,
+                eventBus: window.__castleEventBus,
+                inputManager: window.__castleInputManager,
+                playerController: window.__castlePlayerController,
+                config: CASTLE_CONFIG
+            });
+            window.__castleGameApp.bindWindow(window);
 
             document.getElementById('start-btn').addEventListener('click', startGame);
             document.getElementById('replay-btn').addEventListener('click', () => {
