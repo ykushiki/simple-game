@@ -14,6 +14,15 @@
       this.eventBus.on('chest.opened', () => this.handleChestOpened());
     }
 
+    getQuestDefinitions() {
+      return global.CASTLE_QUEST_DEFINITIONS || [];
+    }
+
+    getCurrentQuestDefinition() {
+      const definitions = this.getQuestDefinitions();
+      return definitions.find((definition) => definition.predicate(this.state)) || definitions[0] || null;
+    }
+
     handleOrbCollected(payload = {}) {
       const orbId = payload.orbId;
       if (!orbId) return this.state;
@@ -40,27 +49,17 @@
     }
 
     getCurrentObjective() {
-      const gateOpened = this.state.get('world.gateOpened', false);
-      const orbState = this.state.get('player.orbs', { sun: false, star: false, moon: false });
-      const collected = Object.values(orbState).filter(Boolean).length;
-
-      if (!gateOpened) {
+      const definition = this.getCurrentQuestDefinition();
+      if (!definition) {
         return {
           locationName: '石の城：正門前',
           objectiveText: 'まずは正門の<b>鉄の門</b>を自分で開けて、中庭へ入ろう。'
         };
       }
 
-      if (collected < (this.config.quest?.requiredOrbCount || 3)) {
-        return {
-          locationName: '石の城：花の中庭',
-          objectiveText: '中央の噴水の前を見回して、<b>3つの宝玉</b>を探そう。'
-        };
-      }
-
       return {
-        locationName: '石の城：秘宝の間',
-        objectiveText: '光の宝玉がそろった！<b>宝箱</b>を開けて秘宝を手に入れよう。'
+        locationName: definition.locationName,
+        objectiveText: definition.objectiveText
       };
     }
 
