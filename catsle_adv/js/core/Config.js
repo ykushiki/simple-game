@@ -14,9 +14,9 @@
         maxZ: 28
       },
       gate: {
-        z: 18,
-        width: 6,
-        openAt: 14
+        z: 11.2,
+        width: 4.8,
+        openAt: 13.2
       },
       interactableRadius: {
         gate: 4.2,

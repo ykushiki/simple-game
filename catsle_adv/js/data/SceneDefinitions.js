@@ -5,7 +5,7 @@
       name: '石の城：正門前',
       spawn: { x: 0, z: 18 },
       interactables: [
-        { id: 'gate_front', type: 'gate', x: 0, z: 18, radius: 4.2 },
+        { id: 'gate_front', type: 'gate', x: 0, z: 11.2, radius: 4.2 },
         { id: 'fountain_central', type: 'fountain', x: 0, z: 0, radius: 4.5 },
         { id: 'gin_companion', type: 'gin', x: 0.8, z: 15.5, radius: 2.0 },
         { id: 'orb_sun', type: 'orb', orbId: 'sun', x: -10, y: 0.8, z: 2, radius: 2.2 },

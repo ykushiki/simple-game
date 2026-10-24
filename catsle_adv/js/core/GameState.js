@@ -11,7 +11,7 @@
           orbs: { sun: false, star: false, moon: false }
         },
         camera: {
-          yaw: Math.PI,
+          yaw: 0,
           pitch: 0
         },
         world: {
@@ -93,7 +93,7 @@
           orbs: { sun: false, star: false, moon: false }
         },
         camera: {
-          yaw: Math.PI,
+          yaw: 0,
           pitch: 0
         },
         world: {

@@ -32,7 +32,7 @@
 
       const result = this.playerController.update({
         keys: input.keys,
-        mouseYaw: this.state.get('camera.yaw', Math.PI),
+        mouseYaw: this.state.get('camera.yaw', 0),
         mousePitch: this.state.get('camera.pitch', 0),
         joystickVector: input.joystickVector,
         joystickActive: input.joystickActive,
@@ -46,6 +46,12 @@
         this.state.set('player.x', result.player.x);
         this.state.set('player.y', result.player.y);
         this.state.set('player.z', result.player.z);
+        if (camera) {
+          camera.position.set(result.player.x, result.player.y, result.player.z);
+          camera.rotation.order = 'YXZ';
+          camera.rotation.y = result.mouseYaw;
+          camera.rotation.x = result.mousePitch;
+        }
       }
 
       if (this.onTick) this.onTick(result);

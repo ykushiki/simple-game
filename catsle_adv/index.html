@@ -310,44 +310,56 @@
             const ctx = canvas.getContext('2d');
 
             if (type === 'stone') {
-                ctx.fillStyle = '#2d3342';
+                ctx.fillStyle = '#a99e89';
                 ctx.fillRect(0, 0, 512, 512);
 
-                // Stone blocks with moss
                 const brickH = 64;
                 const brickW = 128;
                 for (let y = 0; y < 512; y += brickH) {
                     const row = Math.floor(y / brickH);
                     const offsetX = (row % 2 === 0) ? 0 : brickW / 2;
                     for (let x = -brickW; x < 512 + brickW; x += brickW) {
-                        ctx.strokeStyle = '#181c26';
-                        ctx.lineWidth = 4;
+                        const shade = 154 + Math.floor(Math.random() * 36);
+                        ctx.fillStyle = `rgb(${shade + 14}, ${shade + 8}, ${shade - 5})`;
+                        ctx.fillRect(x + offsetX, y, brickW, brickH);
+                        ctx.strokeStyle = '#716a5b';
+                        ctx.lineWidth = 5;
                         ctx.strokeRect(x + offsetX, y, brickW, brickH);
-
-                        // Moss patches
-                        if (Math.random() < 0.35) {
-                            ctx.fillStyle = 'rgba(40, 90, 45, 0.4)';
-                            ctx.fillRect(x + offsetX + 4, y + 4, brickW - 8, brickH - 8);
-                        }
+                        ctx.strokeStyle = 'rgba(255, 248, 229, 0.18)';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(x + offsetX + 5, y + 5, brickW - 10, brickH - 10);
                     }
                 }
+                for (let i = 0; i < 2600; i++) {
+                    const shade = Math.random() < 0.5 ? '65, 57, 45' : '245, 235, 213';
+                    ctx.fillStyle = `rgba(${shade}, ${Math.random() * 0.12})`;
+                    ctx.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 3, 1 + Math.random() * 2);
+                }
             } else if (type === 'grass') {
-                ctx.fillStyle = '#1e3820';
+                ctx.fillStyle = '#49623b';
                 ctx.fillRect(0, 0, 512, 512);
-                for (let i = 0; i < 2000; i++) {
-                    const rx = Math.random() * 512;
-                    const ry = Math.random() * 512;
-                    ctx.fillStyle = Math.random() < 0.5 ? '#2d522c' : '#3d6e3b';
-                    ctx.fillRect(rx, ry, 3, 3);
+                for (let i = 0; i < 9000; i++) {
+                    ctx.fillStyle = Math.random() < 0.5 ? 'rgba(126, 150, 82, 0.22)' : 'rgba(27, 54, 32, 0.2)';
+                    ctx.beginPath();
+                    ctx.arc(Math.random() * 512, Math.random() * 512, 0.5 + Math.random() * 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (type === 'iron') {
+                ctx.fillStyle = '#343a3c';
+                ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 1800; i++) {
+                    const light = Math.random() < 0.5;
+                    ctx.fillStyle = light ? 'rgba(195, 190, 171, 0.12)' : 'rgba(10, 14, 16, 0.2)';
+                    const x = Math.random() * 512;
+                    ctx.fillRect(x, Math.random() * 512, 1 + Math.random() * 2, 2 + Math.random() * 24);
                 }
             } else if (type === 'fountainStone') {
-                ctx.fillStyle = '#4a5568';
+                ctx.fillStyle = '#9b9079';
                 ctx.fillRect(0, 0, 512, 512);
-                // Moss overlay
-                ctx.fillStyle = 'rgba(34, 110, 55, 0.5)';
-                for (let i = 0; i < 40; i++) {
+                ctx.fillStyle = 'rgba(56, 91, 48, 0.2)';
+                for (let i = 0; i < 28; i++) {
                     ctx.beginPath();
-                    ctx.arc(Math.random()*512, Math.random()*512, 10 + Math.random()*30, 0, Math.PI*2);
+                    ctx.arc(Math.random() * 512, Math.random() * 512, 8 + Math.random() * 22, 0, Math.PI * 2);
                     ctx.fill();
                 }
             }
@@ -357,7 +369,7 @@
             return texture;
         }
 
-        let stoneTex, grassTex, fountainTex;
+        let stoneTex, grassTex, ironTex, fountainTex;
         let fountainParticles = [];
         let interactiveObjects = [];
         let castleModel = null;
@@ -373,11 +385,13 @@
             if (Math.abs(nx) > 27 || nz < -22 || nz > 28) return false;
 
             const gateOpened = window.__castleEditorState
-                ? !!window.__castleEditorState.get('world.gateOpened', gateIsOpen)
+                ? !!window.__castleEditorState.get('world.gateOpened', gateIsOpen) &&
+                    !window.__castleEditorState.get('world.gateOpening', gateOpening)
                 : gateIsOpen;
 
             // Front gate is the only blocked zone until opened.
-            const onGate = nz > 14 && nz < 20 && Math.abs(nx) < 6;
+            const gate = CASTLE_CONFIG.world.gate;
+            const onGate = nz > gate.z - 2.2 && nz < gate.openAt && Math.abs(nx) < gate.width / 2;
             if (onGate && !gateOpened) return false;
 
             return true;
@@ -399,17 +413,78 @@
                             child.receiveShadow = true;
 
                             const name = (child.name || '').toLowerCase();
-                            const isGroundLike = (name.includes('ground') || name.includes('bridge') || name.includes('path')) && !name.includes('gate');
-                            if (isGroundLike && child.material && child.material.color) {
-                                child.material = child.material.clone();
-                                child.material.color.setHex(0x2f7d4a);
+                            const isGroundLike = /^(ground|plane)/.test(name);
+                            if (isGroundLike) {
+                                const positions = child.geometry.attributes.position;
+                                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                                for (let i = 0; i < positions.count; i++) {
+                                    minX = Math.min(minX, positions.getX(i));
+                                    maxX = Math.max(maxX, positions.getX(i));
+                                    minY = Math.min(minY, positions.getY(i));
+                                    maxY = Math.max(maxY, positions.getY(i));
+                                }
+                                const width = Math.max(maxX - minX, Number.EPSILON);
+                                const height = Math.max(maxY - minY, Number.EPSILON);
+                                const uv = new Float32Array(positions.count * 2);
+                                for (let i = 0; i < positions.count; i++) {
+                                    uv[i * 2] = (positions.getX(i) - minX) / width;
+                                    uv[i * 2 + 1] = (positions.getY(i) - minY) / height;
+                                }
+                                child.geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+                                child.material = new THREE.MeshBasicMaterial({
+                                    map: grassTex,
+                                    color: 0xe0e5c7,
+                                    side: THREE.DoubleSide
+                                });
+                                return;
+                            }
+                            if (child.material) {
+                                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                                const adjustedMaterials = materials.map((material) => {
+                                    const adjusted = material.clone();
+                                    if (/(gate|wall|tower|palace|bridge|rock)/.test(name)) {
+                                        adjusted.map = stoneTex;
+                                        adjusted.color.setHex(0x93866d);
+                                        adjusted.roughness = 0.92;
+                                        adjusted.metalness = 0;
+                                    }
+                                    if (adjusted.map) adjusted.map.needsUpdate = true;
+                                    return adjusted;
+                                });
+                                child.material = Array.isArray(child.material) ? adjustedMaterials : adjustedMaterials[0];
                             }
                         }
                     });
 
-                    model.position.set(0, 0, -10);
+                    model.position.set(0, 0, 2.8);
                     model.rotation.y = Math.PI;
-                    model.scale.set(2.00, 2.00, 2.00);
+                    model.scale.set(0.8, 0.8, 0.8);
+                    model.updateMatrixWorld(true);
+                    const roofMaterial = new THREE.MeshStandardMaterial({
+                        color: 0x596372,
+                        roughness: 0.88,
+                        metalness: 0.05
+                    });
+                    const towerRoofs = [
+                        { name: 'Towershort_Material_0001', scale: 0.72 },
+                        { name: 'Towershort_Material_0002', scale: 0.72 },
+                        { name: 'Towershort_Material_0003', scale: 0.72 },
+                        { name: 'Towershort_Material_0004', scale: 0.72 },
+                        { name: 'Palacetower2_Material_0001', scale: 0.43 }
+                    ];
+                    towerRoofs.forEach(({ name, scale }) => {
+                        const tower = model.getObjectByName(name);
+                        if (!tower) return;
+                        const bounds = new THREE.Box3().setFromObject(tower);
+                        const size = bounds.getSize(new THREE.Vector3());
+                        const center = bounds.getCenter(new THREE.Vector3());
+                        const radius = Math.max(size.x, size.z) * scale;
+                        const height = Math.max(radius * 1.65, 2);
+                        const roof = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 8), roofMaterial);
+                        roof.position.set(center.x, bounds.max.y + height / 2 - 0.12, center.z);
+                        roof.castShadow = true;
+                        scene.add(roof);
+                    });
                     scene.add(model);
                     castleModel = model;
                     window.__castleLoaded = true;
@@ -419,6 +494,58 @@
                     console.error('Failed to load castle wall model:', error);
                 }
             );
+        }
+
+        function createDistantForest() {
+            const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5b4934, roughness: 1 });
+            const trunkGeometry = new THREE.CylinderGeometry(0.22, 0.42, 1, 7);
+            const pineGeometry = new THREE.ConeGeometry(1, 1, 7);
+            const broadleafGeometry = new THREE.IcosahedronGeometry(1, 1);
+            const foliageMaterials = [
+                new THREE.MeshStandardMaterial({ color: 0x405c36, roughness: 1 }),
+                new THREE.MeshStandardMaterial({ color: 0x526d3d, roughness: 1 }),
+                new THREE.MeshStandardMaterial({ color: 0x637743, roughness: 1 })
+            ];
+
+            for (let i = 0; i < 32; i++) {
+                const angle = (i / 32) * Math.PI * 2 + (Math.random() - 0.5) * 0.12;
+                const distance = 31 + Math.random() * 10;
+                const height = 7 + Math.random() * 7;
+                const tree = new THREE.Group();
+                const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+                trunk.scale.y = height * 0.55;
+                trunk.position.y = height * 0.275;
+                trunk.castShadow = true;
+                tree.add(trunk);
+
+                const foliage = foliageMaterials[i % foliageMaterials.length];
+                if (i % 3 === 0) {
+                    for (let tier = 0; tier < 3; tier++) {
+                        const crown = new THREE.Mesh(
+                            pineGeometry,
+                            foliage
+                        );
+                        crown.position.y = height * (0.48 + tier * 0.19);
+                        const radius = height * (0.28 - tier * 0.045);
+                        crown.scale.set(radius, height * 0.38, radius);
+                        crown.castShadow = true;
+                        tree.add(crown);
+                    }
+                } else {
+                    const crown = new THREE.Mesh(
+                        broadleafGeometry,
+                        foliage
+                    );
+                    crown.position.y = height * 0.68;
+                    crown.scale.set(height * 0.34, height * 0.29, height * 0.34);
+                    crown.castShadow = true;
+                    tree.add(crown);
+                }
+
+                tree.position.set(Math.cos(angle) * distance, -0.35, Math.sin(angle) * distance - 2);
+                tree.rotation.y = Math.random() * Math.PI * 2;
+                scene.add(tree);
+            }
         }
 
         function buildWorld() {
@@ -438,63 +565,83 @@
             gateOpenProgress = initialGateOpened ? 1 : 0;
 
             stoneTex = createProceduralTexture('stone');
-            stoneTex.repeat.set(4, 4);
+            stoneTex.repeat.set(2, 2);
             grassTex = createProceduralTexture('grass');
-            grassTex.repeat.set(10, 10);
+            grassTex.repeat.set(2, 2);
+            ironTex = createProceduralTexture('iron');
             fountainTex = createProceduralTexture('fountainStone');
 
             // Fog & Lighting
-            scene.background = new THREE.Color(0x030712);
-            scene.fog = new THREE.FogExp2(0x030712, 0.025);
+            scene.background = new THREE.Color(0xa8cee5);
+            scene.fog = new THREE.FogExp2(0xc4d9e5, 0.003);
             
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1.1);
+            const ambientLight = new THREE.HemisphereLight(0xdceeff, 0x65724d, 0.9);
             scene.add(ambientLight);
 
-            const sunLight = new THREE.DirectionalLight(0xfff5ea, 1.2);
-            sunLight.position.set(10, 20, 10);
+            const sunLight = new THREE.DirectionalLight(0xfff0d5, 1.5);
+            sunLight.position.set(-18, 32, 16);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.set(1024, 1024);
+            sunLight.shadow.camera.left = -32;
+            sunLight.shadow.camera.right = 32;
+            sunLight.shadow.camera.top = 32;
+            sunLight.shadow.camera.bottom = -32;
             scene.add(sunLight);
 
-            // The imported castle_wall model is the field itself.
-            // No outer wall or floor meshes are built here; the wall model provides the architecture.
+            // The imported castle wall model supplies the courtyard and architecture.
 
-            // Iron gate leaves in the center arch at the front of the keep (closed at start).
-            const gateMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, metalness: 0.9, roughness: 0.25 });
+            const gateConfig = CASTLE_CONFIG.world.gate;
+            const gateWidth = gateConfig.width;
+            const gateZ = gateConfig.z;
+            const gateMat = new THREE.MeshStandardMaterial({
+                map: ironTex,
+                color: 0x899092,
+                metalness: 0.55,
+                roughness: 0.58
+            });
             const createGateLeaf = (leftSide) => {
                 const leafGroup = new THREE.Group();
-                const frame = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3.8, 5.8), gateMat);
-                frame.position.set(leftSide ? 0.1 : -0.1, 2.1, 0);
-                leafGroup.add(frame);
+                const leafWidth = gateWidth / 2;
+                const direction = leftSide ? 1 : -1;
+                [0.08, leafWidth - 0.08].forEach((offset) => {
+                    const stile = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.8, 0.24), gateMat);
+                    stile.position.set(direction * offset, 1.95, 0);
+                    leafGroup.add(stile);
+                });
 
-                for (let i = 0; i < 5; i++) {
-                    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.4, 8), gateMat);
-                    bar.position.set(leftSide ? 0.28 : -0.28, 2.1, -2.1 + i * 1.05);
+                for (let i = 0; i < 4; i++) {
+                    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.45, 8), gateMat);
+                    bar.position.set(direction * (0.45 + i * 0.43), 1.95, 0);
                     leafGroup.add(bar);
                 }
 
-                const strap = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 5.6), gateMat);
-                strap.position.set(leftSide ? 0.24 : -0.24, 2.1, 0);
-                leafGroup.add(strap);
+                [0.45, 1.9, 3.45].forEach((height) => {
+                    const rail = new THREE.Mesh(new THREE.BoxGeometry(leafWidth, 0.16, 0.32), gateMat);
+                    rail.position.set(direction * leafWidth / 2, height, 0);
+                    leafGroup.add(rail);
+                });
 
                 return leafGroup;
             };
 
             gateLeftPivot = new THREE.Group();
-            gateLeftPivot.position.set(-0.1, 0, 18);
+            gateLeftPivot.position.set(-gateWidth / 2, 0, gateZ);
             gateLeftPivot.add(createGateLeaf(true));
             scene.add(gateLeftPivot);
 
             gateRightPivot = new THREE.Group();
-            gateRightPivot.position.set(0.1, 0, 18);
+            gateRightPivot.position.set(gateWidth / 2, 0, gateZ);
             gateRightPivot.add(createGateLeaf(false));
             scene.add(gateRightPivot);
 
             loadCastleModel();
+            createDistantForest();
 
             /* --- FOUNTAIN RELOCATED INSIDE THE CASTLE MODEL --- */
             const fountainGroup = new THREE.Group();
             fountainGroup.position.set(0, 0, 0);
 
-            const fMat = new THREE.MeshStandardMaterial({ map: fountainTex, roughness: 0.6 });
+            const fMat = new THREE.MeshStandardMaterial({ map: fountainTex, roughness: 0.82 });
             
             // Outer Basin Base
             const baseGeo = new THREE.CylinderGeometry(4.5, 5.0, 0.8, 16);
@@ -549,7 +696,7 @@
 
             interactiveObjects.push({
                 type: 'gate',
-                x: 0, z: 18.5, radius: 4.2
+                x: 0, z: gateZ, radius: 4.2
             });
 
             // Water Spray Particles
@@ -725,6 +872,12 @@
 
             if (registry && registry.items && registry.items.length) {
                 nearObj = registry.findNearby(player.x, player.z);
+                if (!gateOpened) {
+                    const gate = registry.items.find((item) => item.type === 'gate');
+                    if (gate && Math.hypot(player.x - gate.x, player.z - gate.z) <= gate.radius) {
+                        nearObj = gate;
+                    }
+                }
                 if (nearObj) {
                     const promptState = {
                         orbs: (window.__castleEditorState && window.__castleEditorState.get('player.orbs', player.orbs)) || player.orbs
@@ -915,8 +1068,9 @@
             camera.rotation.order = 'YXZ';
             camera.rotation.y = mouseYaw;
             camera.rotation.x = mousePitch;
+        }
 
-            // Update Companion Fox Gin Position (Follows Player smoothly)
+        function updateWorldAnimations() {
             const targetGinX = player.x + Math.sin(mouseYaw + 0.8) * 1.5;
             const targetGinZ = player.z - Math.cos(mouseYaw + 0.8) * 1.5;
 
@@ -934,7 +1088,6 @@
                 }
             }
 
-            // Animate Fountain Particles
             fountainParticles.forEach(p => {
                 p.position.x += p.userData.vx;
                 p.position.y += p.userData.vy;
@@ -947,7 +1100,6 @@
                 }
             });
 
-            // Gate opening swing animation.
             const currentGateOpened = window.__castleEditorState
                 ? !!window.__castleEditorState.get('world.gateOpened', gateIsOpen)
                 : gateIsOpen;
@@ -957,13 +1109,14 @@
 
             if (currentGateOpening && gateLeftPivot && gateRightPivot) {
                 gateOpening = true;
-                gateOpenProgress = Math.min(1, gateOpenProgress + 0.02);
+                gateOpenProgress = Math.min(1, gateOpenProgress + 0.04);
                 if (window.__castleEditorState) {
                     window.__castleEditorState.set('world.gateOpenProgress', gateOpenProgress);
                 }
-                const openAngle = gateOpenProgress * (Math.PI / 2.8);
-                gateLeftPivot.rotation.y = -openAngle;
-                gateRightPivot.rotation.y = openAngle;
+                const easedProgress = gateOpenProgress * gateOpenProgress * (3 - 2 * gateOpenProgress);
+                const openAngle = easedProgress * (Math.PI / 2);
+                gateLeftPivot.rotation.y = openAngle;
+                gateRightPivot.rotation.y = -openAngle;
                 if (gateOpenProgress >= 1) {
                     gateOpening = false;
                     gateIsOpen = true;
@@ -977,8 +1130,8 @@
                 gateIsOpen = true;
                 gateOpening = false;
                 gateOpenProgress = 1;
-                gateLeftPivot.rotation.y = -(Math.PI / 2.8);
-                gateRightPivot.rotation.y = Math.PI / 2.8;
+                gateLeftPivot.rotation.y = Math.PI / 2;
+                gateRightPivot.rotation.y = -Math.PI / 2;
             }
         }
 
@@ -1006,6 +1159,11 @@
                 }
             } else {
                 updatePlayer();
+            }
+
+            if (gameState === 'PLAYING') {
+                checkInteractions();
+                updateWorldAnimations();
             }
 
             if (renderer && scene && camera) {
@@ -1180,10 +1338,16 @@
 
             camera = new THREE.PerspectiveCamera(70, width / height, 0.1, 1000);
             camera.position.set(player.x, player.y, player.z);
+            window.camera = camera;
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(width, height);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 0.95;
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
             while (container.firstChild) container.removeChild(container.firstChild);
             container.appendChild(renderer.domElement);
@@ -1275,11 +1439,13 @@
 
             player.x = 0;
             player.z = 18;
-            mouseYaw = Math.PI;
+            mouseYaw = 0;
             mousePitch = 0;
             player.orbs = { sun: false, star: false, moon: false };
             window.__castleEditorState.set('player.x', 0);
             window.__castleEditorState.set('player.z', 18);
+            window.__castleEditorState.set('camera.yaw', 0);
+            window.__castleEditorState.set('camera.pitch', 0);
             window.__castleEditorState.set('player.orbs', { sun: false, star: false, moon: false });
             window.__castleEditorState.set('world.gateOpened', false);
             window.__castleEditorState.set('world.currentArea', 'front_gate');
@@ -1318,6 +1484,7 @@
 
         function initApp() {
             init3D();
+            window.canMoveTo = canMoveTo;
             setupControls();
             setupMobileUI();
 
